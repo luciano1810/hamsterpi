@@ -61,8 +61,9 @@ Open `http://<pi-ip>:8002` for log console.
 ## Settings & Language
 
 - Click `设置 / Settings` in the top-right toolbar.
-- Built-in config editor can modify all project fields in JSON and persist to `config/config.yaml`.
-- Settings panel includes direct VLM API fields (`enabled/provider/model/endpoint/api_key_env/timeout_seconds`) and writes them back to `health.vlm`.
+- Settings panel uses a left-group/right-detail layout (no raw JSON editor).
+- All config groups are editable via field forms and persist to `config/config.yaml`.
+- VLM API config is available under the `VLM API` group (`health.vlm`).
 - UI language is configurable in settings:
   - default: `zh-CN`
   - optional: `en-US`

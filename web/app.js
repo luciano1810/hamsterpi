@@ -109,25 +109,47 @@ const I18N = {
     init_step_hideout: "躲避窝区域",
     init_step_hideout_desc: "用于起床/入睡判断",
     settings_title: "系统设置",
-    settings_sub: "可编辑全部配置项，并设置默认语言。",
-    settings_run_mode: "运行模式",
-    settings_demo_source: "Demo 数据源",
-    settings_language: "界面语言",
-    settings_vlm_title: "VLM API 配置",
-    settings_vlm_enabled: "VLM 启用",
-    settings_vlm_provider: "Provider",
-    settings_vlm_model: "模型",
-    settings_vlm_endpoint: "接口地址",
-    settings_vlm_api_key_env: "API Key 环境变量名",
-    settings_vlm_timeout: "超时（秒）",
-    settings_vlm_enabled_true: "启用",
-    settings_vlm_enabled_false: "禁用",
+    settings_sub: "左侧选择配置分组，右侧编辑具体配置项。",
+    settings_section_title: "配置分组",
+    settings_section_app: "应用基础",
+    settings_section_video: "视频输入",
+    settings_section_runtime: "运行时参数",
+    settings_section_motion: "运动触发",
+    settings_section_environment: "环境分析",
+    settings_section_wheel: "跑轮参数",
+    settings_section_spatial: "空间区域",
+    settings_section_health: "健康扫描",
+    settings_section_vlm: "VLM API 配置",
+    settings_section_inventory: "资源监控",
+    settings_section_alerts: "告警规则",
+    settings_section_frontend: "前端展示",
+    settings_section_logging: "日志系统",
+    settings_section_demo_tools: "演示工具",
+    settings_section_app_desc: "运行模式、时区、上传目录等应用基础设置。",
+    settings_section_video_desc: "视频源路径与输入帧率、分辨率设置。",
+    settings_section_runtime_desc: "低内存模式、分析分辨率和帧处理节流。",
+    settings_section_motion_desc: "画面变动触发录制相关阈值和输出参数。",
+    settings_section_environment_desc: "光照、清洁与垫料舒适度分析参数。",
+    settings_section_wheel_desc: "跑轮直径、ROI 与色点检测阈值。",
+    settings_section_spatial_desc: "围栏、多边形区域、热区空间分析参数。",
+    settings_section_health_desc: "健康扫描周期和体型基线设置。",
+    settings_section_vlm_desc: "配置模型服务商、模型名、接口地址与鉴权环境变量。",
+    settings_section_inventory_desc: "水位/食量/磨牙区域与告警阈值。",
+    settings_section_alerts_desc: "越界通知与行为风险阈值配置。",
+    settings_section_frontend_desc: "面板刷新周期、语言与历史窗口。",
+    settings_section_logging_desc: "日志级别、落盘路径和滚动策略。",
+    settings_section_demo_tools_desc: "上传压缩视频并触发分析。",
+    settings_demo_tools_hint: "请先在“应用基础”中设置 run_mode=demo 且 demo_source=uploaded_video。",
+    settings_form_empty: "当前分组没有可编辑字段。",
+    settings_bool_true: "是",
+    settings_bool_false: "否",
     settings_upload_label: "上传视频文件",
     settings_editor_label: "配置编辑器（JSON）",
-    mode_demo: "Demo",
+    mode_demo: "演示模式",
     mode_real: "真实模式（预留）",
     source_virtual: "虚拟数据",
-    source_uploaded_video: "上传视频分析",
+    source_uploaded_video: "上传视频",
+    settings_invalid_number: "请输入有效数字",
     btn_upload_video: "上传视频",
     btn_analyze_video: "分析视频",
     init_status_loading: "正在加载预览画面...",
@@ -322,25 +344,47 @@ const I18N = {
     init_step_hideout: "Hideout Zone",
     init_step_hideout_desc: "Used for wake/sleep schedule",
     settings_title: "System Settings",
-    settings_sub: "Edit all configuration fields and set default language.",
-    settings_run_mode: "Run Mode",
-    settings_demo_source: "Demo Data Source",
-    settings_language: "UI Language",
-    settings_vlm_title: "VLM API Config",
-    settings_vlm_enabled: "VLM Enabled",
-    settings_vlm_provider: "Provider",
-    settings_vlm_model: "Model",
-    settings_vlm_endpoint: "Endpoint",
-    settings_vlm_api_key_env: "API Key Env Name",
-    settings_vlm_timeout: "Timeout (seconds)",
-    settings_vlm_enabled_true: "Enabled",
-    settings_vlm_enabled_false: "Disabled",
+    settings_sub: "Choose a config group on the left and edit concrete fields on the right.",
+    settings_section_title: "Config Groups",
+    settings_section_app: "App Basics",
+    settings_section_video: "Video Input",
+    settings_section_runtime: "Runtime",
+    settings_section_motion: "Motion Trigger",
+    settings_section_environment: "Environment",
+    settings_section_wheel: "Wheel",
+    settings_section_spatial: "Spatial",
+    settings_section_health: "Health Core",
+    settings_section_vlm: "VLM API",
+    settings_section_inventory: "Inventory",
+    settings_section_alerts: "Alerts",
+    settings_section_frontend: "Frontend",
+    settings_section_logging: "Logging",
+    settings_section_demo_tools: "Demo Tools",
+    settings_section_app_desc: "Run mode, timezone and demo upload directory.",
+    settings_section_video_desc: "Video source path, fps and frame dimensions.",
+    settings_section_runtime_desc: "Low-memory profile and frame processing throttling.",
+    settings_section_motion_desc: "Motion-trigger thresholds and capture output settings.",
+    settings_section_environment_desc: "Lighting, cleanliness and bedding analysis parameters.",
+    settings_section_wheel_desc: "Wheel diameter, ROI and marker detection settings.",
+    settings_section_spatial_desc: "Fence polygons, zones and spatial analytics parameters.",
+    settings_section_health_desc: "Health scan interval and body-area baseline.",
+    settings_section_vlm_desc: "Provider/model/endpoint/api key env and request timeout.",
+    settings_section_inventory_desc: "Water/food/gnaw ROIs and refill thresholds.",
+    settings_section_alerts_desc: "Escape notifier and risk threshold settings.",
+    settings_section_frontend_desc: "Dashboard refresh interval, language and history window.",
+    settings_section_logging_desc: "Log level, file path and rotation policy.",
+    settings_section_demo_tools_desc: "Upload compressed video and trigger analysis.",
+    settings_demo_tools_hint: "Set run_mode=demo and demo_source=uploaded_video in App Basics first.",
+    settings_form_empty: "No editable fields in current group.",
+    settings_bool_true: "True",
+    settings_bool_false: "False",
     settings_upload_label: "Upload Video",
     settings_editor_label: "Configuration Editor (JSON)",
     mode_demo: "Demo",
     mode_real: "Real (Reserved)",
     source_virtual: "Virtual Data",
     source_uploaded_video: "Uploaded Video Analysis",
+    settings_invalid_number: "Please enter a valid number",
     btn_upload_video: "Upload Video",
     btn_analyze_video: "Analyze Video",
     init_status_loading: "Loading preview frame...",
@@ -482,6 +526,179 @@ const CLIENT_VIDEO_COMPRESS = {
   chunkMs: 500,
 };
 
+const SETTINGS_SECTIONS = [
+  { id: "app", path: "app", labelKey: "settings_section_app", descKey: "settings_section_app_desc" },
+  { id: "video", path: "video", labelKey: "settings_section_video", descKey: "settings_section_video_desc" },
+  { id: "runtime", path: "runtime", labelKey: "settings_section_runtime", descKey: "settings_section_runtime_desc" },
+  { id: "motion_trigger", path: "motion_trigger", labelKey: "settings_section_motion", descKey: "settings_section_motion_desc" },
+  { id: "environment", path: "environment", labelKey: "settings_section_environment", descKey: "settings_section_environment_desc" },
+  { id: "wheel", path: "wheel", labelKey: "settings_section_wheel", descKey: "settings_section_wheel_desc" },
+  { id: "spatial", path: "spatial", labelKey: "settings_section_spatial", descKey: "settings_section_spatial_desc" },
+  {
+    id: "health",
+    path: "health",
+    includeKeys: ["capture_interval_seconds", "baseline_body_area_px"],
+    labelKey: "settings_section_health",
+    descKey: "settings_section_health_desc",
+  },
+  { id: "health_vlm", path: "health.vlm", labelKey: "settings_section_vlm", descKey: "settings_section_vlm_desc" },
+  { id: "inventory", path: "inventory", labelKey: "settings_section_inventory", descKey: "settings_section_inventory_desc" },
+  { id: "alerts", path: "alerts", labelKey: "settings_section_alerts", descKey: "settings_section_alerts_desc" },
+  { id: "frontend", path: "frontend", labelKey: "settings_section_frontend", descKey: "settings_section_frontend_desc" },
+  { id: "logging", path: "logging", labelKey: "settings_section_logging", descKey: "settings_section_logging_desc" },
+  { id: "demo_tools", path: "", special: "demo_tools", labelKey: "settings_section_demo_tools", descKey: "settings_section_demo_tools_desc" },
+];
+
+const SETTINGS_FIELD_LABELS = {
+  "app.title": { "zh-CN": "控制台标题", "en-US": "Console Title" },
+  "app.timezone": { "zh-CN": "时区", "en-US": "Timezone" },
+  "app.run_mode": { "zh-CN": "运行模式", "en-US": "Run Mode" },
+  "app.demo_source": { "zh-CN": "演示数据来源", "en-US": "Demo Source" },
+  "app.demo_upload_dir": { "zh-CN": "演示视频目录", "en-US": "Demo Upload Directory" },
+  "video.source_path": { "zh-CN": "视频源路径", "en-US": "Video Source Path" },
+  "video.fps": { "zh-CN": "输入帧率 (FPS)", "en-US": "Input FPS" },
+  "video.frame_width": { "zh-CN": "画面宽度 (px)", "en-US": "Frame Width (px)" },
+  "video.frame_height": { "zh-CN": "画面高度 (px)", "en-US": "Frame Height (px)" },
+  "video.simulate": { "zh-CN": "启用模拟输入", "en-US": "Use Simulated Input" },
+  "video.snapshot_interval_seconds": { "zh-CN": "快照间隔 (秒)", "en-US": "Snapshot Interval (s)" },
+  "runtime.profile": { "zh-CN": "运行配置档", "en-US": "Runtime Profile" },
+  "runtime.low_memory_mode": { "zh-CN": "低内存模式", "en-US": "Low Memory Mode" },
+  "runtime.process_every_nth_frame": { "zh-CN": "每 N 帧处理 1 帧", "en-US": "Process Every Nth Frame" },
+  "runtime.max_frame_results": { "zh-CN": "最大缓存结果帧数", "en-US": "Max Cached Frame Results" },
+  "runtime.analysis_scale": { "zh-CN": "分析缩放比例", "en-US": "Analysis Scale" },
+  "runtime.max_analysis_width": { "zh-CN": "分析最大宽度 (px)", "en-US": "Max Analysis Width (px)" },
+  "runtime.max_analysis_height": { "zh-CN": "分析最大高度 (px)", "en-US": "Max Analysis Height (px)" },
+  "runtime.max_fps": { "zh-CN": "最大处理帧率 (FPS)", "en-US": "Max Processing FPS" },
+  "runtime.store_debug_frames": { "zh-CN": "保存调试帧", "en-US": "Store Debug Frames" },
+  "motion_trigger.enabled": { "zh-CN": "启用运动触发", "en-US": "Enable Motion Trigger" },
+  "motion_trigger.downscale_width": { "zh-CN": "检测降采样宽度 (px)", "en-US": "Detection Downscale Width (px)" },
+  "motion_trigger.blur_kernel": { "zh-CN": "模糊核大小", "en-US": "Blur Kernel Size" },
+  "motion_trigger.diff_threshold": { "zh-CN": "差分阈值", "en-US": "Difference Threshold" },
+  "motion_trigger.min_motion_ratio": { "zh-CN": "最小运动比例", "en-US": "Minimum Motion Ratio" },
+  "motion_trigger.start_trigger_frames": { "zh-CN": "开始触发帧数", "en-US": "Start Trigger Frames" },
+  "motion_trigger.stop_trigger_frames": { "zh-CN": "停止触发帧数", "en-US": "Stop Trigger Frames" },
+  "motion_trigger.min_capture_seconds": { "zh-CN": "最短录制时长 (秒)", "en-US": "Min Capture Duration (s)" },
+  "motion_trigger.cool_down_seconds": { "zh-CN": "冷却时间 (秒)", "en-US": "Cooldown (s)" },
+  "motion_trigger.output_dir": { "zh-CN": "录制输出目录", "en-US": "Capture Output Directory" },
+  "motion_trigger.record_video": { "zh-CN": "启用视频录制", "en-US": "Record Video" },
+  "motion_trigger.output_fps": { "zh-CN": "录制帧率 (FPS)", "en-US": "Capture FPS" },
+  "motion_trigger.codec": { "zh-CN": "录制编码", "en-US": "Capture Codec" },
+  "environment.enabled": { "zh-CN": "启用环境分析", "en-US": "Enable Environment Analysis" },
+  "environment.sample_every_nth_frame": { "zh-CN": "每 N 帧采样 1 帧", "en-US": "Sample Every Nth Frame" },
+  "environment.low_light_threshold": { "zh-CN": "低光阈值", "en-US": "Low Light Threshold" },
+  "environment.high_light_threshold": { "zh-CN": "高光阈值", "en-US": "High Light Threshold" },
+  "environment.hygiene_dark_ratio_threshold": { "zh-CN": "卫生暗区阈值", "en-US": "Hygiene Dark-Ratio Threshold" },
+  "environment.clutter_edge_threshold": { "zh-CN": "杂乱边缘阈值", "en-US": "Clutter Edge Threshold" },
+  "environment.bedding_roi": { "zh-CN": "垫料区域 ROI", "en-US": "Bedding ROI" },
+  "wheel.diameter_cm": { "zh-CN": "跑轮直径 (cm)", "en-US": "Wheel Diameter (cm)" },
+  "wheel.roi": { "zh-CN": "跑轮 ROI", "en-US": "Wheel ROI" },
+  "wheel.min_rpm_for_running": { "zh-CN": "判定奔跑最小 RPM", "en-US": "Minimum Running RPM" },
+  "wheel.marker_hsv_ranges": { "zh-CN": "色点 HSV 范围", "en-US": "Marker HSV Ranges" },
+  "spatial.frame_width": { "zh-CN": "空间分析宽度 (px)", "en-US": "Spatial Frame Width (px)" },
+  "spatial.frame_height": { "zh-CN": "空间分析高度 (px)", "en-US": "Spatial Frame Height (px)" },
+  "spatial.fence_polygon": { "zh-CN": "围栏多边形", "en-US": "Fence Polygon" },
+  "spatial.wheel_mask_polygon": { "zh-CN": "跑轮遮罩多边形", "en-US": "Wheel Mask Polygon" },
+  "spatial.zones": { "zh-CN": "功能区域配置", "en-US": "Zone Settings" },
+  "health.capture_interval_seconds": { "zh-CN": "健康扫描间隔 (秒)", "en-US": "Health Scan Interval (s)" },
+  "health.baseline_body_area_px": { "zh-CN": "体型基线面积 (px)", "en-US": "Baseline Body Area (px)" },
+  "health.vlm.enabled": { "zh-CN": "启用 VLM", "en-US": "Enable VLM" },
+  "health.vlm.provider": { "zh-CN": "VLM 服务商", "en-US": "VLM Provider" },
+  "health.vlm.endpoint": { "zh-CN": "接口地址", "en-US": "Endpoint" },
+  "health.vlm.model": { "zh-CN": "模型名称", "en-US": "Model" },
+  "health.vlm.api_key_env": { "zh-CN": "API Key 环境变量", "en-US": "API Key Environment Variable" },
+  "health.vlm.timeout_seconds": { "zh-CN": "请求超时 (秒)", "en-US": "Request Timeout (s)" },
+  "inventory.water_roi": { "zh-CN": "水位 ROI", "en-US": "Water ROI" },
+  "inventory.food_roi": { "zh-CN": "食盆 ROI", "en-US": "Food ROI" },
+  "inventory.gnaw_roi": { "zh-CN": "磨牙区 ROI", "en-US": "Gnaw ROI" },
+  "inventory.low_water_threshold": { "zh-CN": "低水位阈值", "en-US": "Low Water Threshold" },
+  "inventory.low_food_threshold": { "zh-CN": "低食量阈值", "en-US": "Low Food Threshold" },
+  "alerts.escape_enabled": { "zh-CN": "启用越界告警", "en-US": "Enable Escape Alerts" },
+  "alerts.mac_notifier_command": { "zh-CN": "macOS 通知命令", "en-US": "macOS Notifier Command" },
+  "alerts.max_stereotypy_index": { "zh-CN": "刻板行为指数上限", "en-US": "Max Stereotypy Index" },
+  "alerts.max_weight_change_ratio": { "zh-CN": "体型变化比例上限", "en-US": "Max Weight Change Ratio" },
+  "frontend.refresh_interval_seconds": { "zh-CN": "前端刷新间隔 (秒)", "en-US": "Frontend Refresh Interval (s)" },
+  "frontend.history_minutes": { "zh-CN": "历史窗口 (分钟)", "en-US": "History Window (min)" },
+  "frontend.default_language": { "zh-CN": "默认语言", "en-US": "Default Language" },
+  "frontend.available_languages": { "zh-CN": "可用语言", "en-US": "Available Languages" },
+  "logging.level": { "zh-CN": "日志级别", "en-US": "Log Level" },
+  "logging.file_path": { "zh-CN": "日志文件路径", "en-US": "Log File Path" },
+  "logging.max_bytes": { "zh-CN": "单文件最大字节数", "en-US": "Max Bytes Per File" },
+  "logging.backup_count": { "zh-CN": "日志备份数量", "en-US": "Backup File Count" },
+  "logging.console_enabled": { "zh-CN": "控制台输出", "en-US": "Console Output" },
+};
+
+const SETTINGS_FIELD_OPTIONS = {
+  "app.timezone": ["Asia/Shanghai", "America/Los_Angeles", "UTC", "Europe/London", "Asia/Tokyo"],
+  "app.run_mode": [
+    { value: "demo", labelKey: "mode_demo" },
+    { value: "real", labelKey: "mode_real" },
+  ],
+  "app.demo_source": [
+    { value: "virtual", labelKey: "source_virtual" },
+    { value: "uploaded_video", labelKey: "source_uploaded_video" },
+  ],
+  "video.fps": [5, 8, 10, 12, 15, 24, 30],
+  "video.frame_width": [320, 480, 640, 960, 1280, 1920],
+  "video.frame_height": [180, 270, 360, 540, 720, 1080],
+  "video.snapshot_interval_seconds": [60, 120, 300, 600, 900, 1800],
+  "runtime.profile": [
+    { value: "rpi_zero2w", label: { "zh-CN": "Pi Zero 2W 低内存", "en-US": "Pi Zero 2W (Low Memory)" } },
+    { value: "default", label: { "zh-CN": "默认", "en-US": "Default" } },
+    { value: "high_performance", label: { "zh-CN": "高性能", "en-US": "High Performance" } },
+  ],
+  "runtime.process_every_nth_frame": [1, 2, 3, 4, 5, 6, 8, 10],
+  "runtime.max_frame_results": [120, 240, 320, 480, 720, 1440],
+  "runtime.analysis_scale": [0.25, 0.33, 0.5, 0.67, 0.75, 1],
+  "runtime.max_analysis_width": [320, 480, 640, 960, 1280],
+  "runtime.max_analysis_height": [180, 270, 360, 540, 720],
+  "runtime.max_fps": [5, 8, 10, 12, 15, 20, 24, 30],
+  "motion_trigger.downscale_width": [160, 240, 320, 480, 640],
+  "motion_trigger.blur_kernel": [3, 5, 7, 9, 11],
+  "motion_trigger.diff_threshold": [12, 18, 24, 30, 36, 48],
+  "motion_trigger.start_trigger_frames": [1, 2, 3, 4, 5],
+  "motion_trigger.stop_trigger_frames": [5, 10, 15, 20, 30, 45],
+  "motion_trigger.min_capture_seconds": [0.5, 1, 1.5, 2, 3, 5],
+  "motion_trigger.cool_down_seconds": [0, 0.5, 1, 2, 3, 5],
+  "motion_trigger.output_fps": [5, 8, 10, 12, 15, 24, 30],
+  "motion_trigger.codec": [
+    { value: "mp4v", label: { "zh-CN": "MP4V（通用）", "en-US": "MP4V (Generic)" } },
+    { value: "avc1", label: { "zh-CN": "AVC1（H.264）", "en-US": "AVC1 (H.264)" } },
+    { value: "XVID", label: { "zh-CN": "XVID", "en-US": "XVID" } },
+    { value: "MJPG", label: { "zh-CN": "MJPG", "en-US": "MJPG" } },
+  ],
+  "environment.sample_every_nth_frame": [1, 2, 3, 5, 8, 10],
+  "environment.low_light_threshold": [0.1, 0.15, 0.2, 0.22, 0.25, 0.3],
+  "environment.high_light_threshold": [0.75, 0.8, 0.85, 0.9, 0.95],
+  "environment.hygiene_dark_ratio_threshold": [0.1, 0.15, 0.2, 0.24, 0.3, 0.35],
+  "environment.clutter_edge_threshold": [0.1, 0.15, 0.18, 0.22, 0.25, 0.3],
+  "wheel.diameter_cm": [12, 14, 16, 18, 20, 22, 24],
+  "wheel.min_rpm_for_running": [4, 6, 8, 10, 12, 15, 18],
+  "health.capture_interval_seconds": [300, 600, 900, 1200, 1800, 3600],
+  "health.baseline_body_area_px": [12000, 15000, 18000, 22000, 26000, 30000],
+  "health.vlm.provider": [
+    { value: "openai", label: { "zh-CN": "OpenAI", "en-US": "OpenAI" } },
+    { value: "azure_openai", label: { "zh-CN": "Azure OpenAI", "en-US": "Azure OpenAI" } },
+    { value: "anthropic", label: { "zh-CN": "Anthropic", "en-US": "Anthropic" } },
+    { value: "google", label: { "zh-CN": "Google", "en-US": "Google" } },
+  ],
+  "health.vlm.timeout_seconds": [10, 15, 20, 30, 45, 60],
+  "inventory.low_water_threshold": [0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4],
+  "inventory.low_food_threshold": [0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4],
+  "alerts.mac_notifier_command": ["terminal-notifier", "osascript", ""],
+  "alerts.max_stereotypy_index": [0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+  "alerts.max_weight_change_ratio": [0.05, 0.08, 0.1, 0.12, 0.15, 0.2],
+  "frontend.refresh_interval_seconds": [5, 10, 15, 20, 30, 45, 60],
+  "frontend.history_minutes": [60, 120, 360, 720, 1440, 2880],
+  "logging.level": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+  "logging.max_bytes": [1048576, 2097152, 5242880, 10485760, 20971520],
+  "logging.backup_count": [1, 3, 5, 7, 10],
+};
+
+const LANGUAGE_LABELS = {
+  "zh-CN": { "zh-CN": "简体中文", "en-US": "Chinese (Simplified)" },
+  "en-US": { "zh-CN": "英语", "en-US": "English" },
+};
+
 const initState = {
   activeIndex: 0,
   image: null,
@@ -490,6 +707,10 @@ const initState = {
   canvas: null,
   ctx: null,
 };
+
+let settingsRawConfig = null;
+let settingsWorkingConfig = null;
+let settingsActiveSectionId = "app";
 
 function t(key) {
   const table = I18N[currentLanguage] || I18N["zh-CN"];
@@ -502,6 +723,444 @@ function formatText(key, params = {}) {
     text = text.replaceAll(`{${name}}`, String(value));
   }
   return text;
+}
+
+function deepClone(value) {
+  if (typeof structuredClone === "function") {
+    return structuredClone(value);
+  }
+  return JSON.parse(JSON.stringify(value));
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function tOrDefault(key, fallback) {
+  const value = t(key);
+  return value === key ? fallback : value;
+}
+
+function humanizeKey(key) {
+  return String(key || "")
+    .replaceAll("_", " ")
+    .replaceAll(".", " ");
+}
+
+function getByPath(obj, path) {
+  if (!obj || !path) {
+    return obj;
+  }
+  return path.split(".").reduce((acc, key) => (acc && typeof acc === "object" ? acc[key] : undefined), obj);
+}
+
+function setByPath(obj, path, value) {
+  if (!obj || !path) {
+    return;
+  }
+  const parts = path.split(".");
+  let cursor = obj;
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    const key = parts[i];
+    if (!cursor[key] || typeof cursor[key] !== "object") {
+      cursor[key] = {};
+    }
+    cursor = cursor[key];
+  }
+  cursor[parts[parts.length - 1]] = value;
+}
+
+function getSettingsSectionDef(id = settingsActiveSectionId) {
+  return SETTINGS_SECTIONS.find((item) => item.id === id) || SETTINGS_SECTIONS[0];
+}
+
+function localizedMetaLabel(table) {
+  if (!table || typeof table !== "object" || Array.isArray(table)) {
+    return "";
+  }
+  return table[currentLanguage] || table["zh-CN"] || table["en-US"] || "";
+}
+
+function settingsFieldLabel(path) {
+  const mapped = localizedMetaLabel(SETTINGS_FIELD_LABELS[path]);
+  if (mapped) {
+    return mapped;
+  }
+  const key = `settings_field_${path.replaceAll(".", "_")}`;
+  const fallback = humanizeKey(path.split(".").pop());
+  return tOrDefault(key, fallback);
+}
+
+function settingsFieldKind(path, value) {
+  if (
+    path === "frontend.available_languages" &&
+    Array.isArray(value) &&
+    value.every((item) => typeof item === "string")
+  ) {
+    return "language-array";
+  }
+  if (typeof value === "boolean") {
+    return "boolean";
+  }
+  if (typeof value === "number") {
+    return "number";
+  }
+  if (typeof value === "string") {
+    return "string";
+  }
+  return "json";
+}
+
+function normalizeFieldOption(option) {
+  if (option && typeof option === "object" && Object.prototype.hasOwnProperty.call(option, "value")) {
+    return option;
+  }
+  return { value: option };
+}
+
+function settingsOptionValueEquals(a, b, kind) {
+  if (kind === "number") {
+    const aNum = Number(a);
+    const bNum = Number(b);
+    if (Number.isFinite(aNum) && Number.isFinite(bNum)) {
+      return aNum === bNum;
+    }
+  }
+  return String(a) === String(b);
+}
+
+function settingsOptionLabel(option) {
+  if (option.labelKey) {
+    return t(option.labelKey);
+  }
+  if (typeof option.label === "string") {
+    return option.label;
+  }
+  const localized = localizedMetaLabel(option.label);
+  if (localized) {
+    return localized;
+  }
+  if (option.value === "") {
+    return currentLanguage === "zh-CN" ? "禁用通知命令" : "Disable notifier command";
+  }
+  return String(option.value ?? "");
+}
+
+function settingsFieldOptions(path, kind, value) {
+  if (kind !== "string" && kind !== "number") {
+    return null;
+  }
+
+  let rawOptions = SETTINGS_FIELD_OPTIONS[path];
+  if (path === "frontend.default_language") {
+    const languagePool = Array.isArray(availableLanguages) && availableLanguages.length
+      ? availableLanguages
+      : ["zh-CN", "en-US"];
+    rawOptions = Array.from(new Set(languagePool)).map((langCode) => ({
+      value: langCode,
+      label: localizedMetaLabel(LANGUAGE_LABELS[langCode]) || langCode,
+    }));
+  }
+
+  if (!Array.isArray(rawOptions) || rawOptions.length === 0) {
+    return null;
+  }
+
+  const options = rawOptions.map(normalizeFieldOption);
+  if (
+    value !== undefined &&
+    value !== null &&
+    !options.some((option) => settingsOptionValueEquals(option.value, value, kind))
+  ) {
+    options.push({
+      value,
+      label: currentLanguage === "zh-CN" ? `当前值：${String(value)}` : `Current: ${String(value)}`,
+    });
+  }
+
+  return options;
+}
+
+function languageDisplayName(code) {
+  return localizedMetaLabel(LANGUAGE_LABELS[code]) || code;
+}
+
+function renderSettingsSelectField(value, kind, label, pathText, options) {
+  const isInteger = kind === "number" ? Number.isInteger(value) : false;
+  const integerAttr = kind === "number" ? ` data-setting-integer="${isInteger ? "true" : "false"}"` : "";
+  const optionHtml = options
+    .map((option) => {
+      const selected = settingsOptionValueEquals(option.value, value, kind) ? "selected" : "";
+      const optionValue = escapeHtml(String(option.value ?? ""));
+      const optionLabel = escapeHtml(settingsOptionLabel(option));
+      return `<option value="${optionValue}" ${selected}>${optionLabel}</option>`;
+    })
+    .join("");
+
+  return `
+    <div class="settings-form-row">
+      <label class="settings-label" for="field-${pathText}">${escapeHtml(label)}</label>
+      <div class="settings-form-subkey">${pathText}</div>
+      <select
+        id="field-${pathText}"
+        class="settings-select"
+        data-setting-path="${pathText}"
+        data-setting-kind="${kind}"${integerAttr}
+      >
+        ${optionHtml}
+      </select>
+    </div>
+  `;
+}
+
+function renderLanguageArrayField(value, label, pathText) {
+  const selected = Array.isArray(value) ? value : [];
+  const options = Array.from(
+    new Set([
+      "zh-CN",
+      "en-US",
+      ...(Array.isArray(availableLanguages) ? availableLanguages : []),
+      ...selected,
+    ])
+  );
+
+  const checkHtml = options
+    .map((code) => {
+      const checked = selected.includes(code) ? "checked" : "";
+      return `
+        <label class="settings-check-item">
+          <input type="checkbox" value="${escapeHtml(code)}" ${checked} />
+          <span>${escapeHtml(languageDisplayName(code))}</span>
+          <span class="settings-check-code">${escapeHtml(code)}</span>
+        </label>
+      `;
+    })
+    .join("");
+
+  return `
+    <div class="settings-form-row">
+      <label class="settings-label">${escapeHtml(label)}</label>
+      <div class="settings-form-subkey">${pathText}</div>
+      <div class="settings-check-list" data-setting-path="${pathText}" data-setting-kind="language-array">
+        ${checkHtml}
+      </div>
+    </div>
+  `;
+}
+
+function renderSettingsField(path, value) {
+  const kind = settingsFieldKind(path, value);
+  const label = settingsFieldLabel(path);
+  const pathText = escapeHtml(path);
+  const options = settingsFieldOptions(path, kind, value);
+
+  if (kind === "language-array") {
+    return renderLanguageArrayField(value, label, pathText);
+  }
+
+  if (kind === "boolean") {
+    return `
+      <div class="settings-form-row">
+        <label class="settings-label" for="field-${pathText}">${escapeHtml(label)}</label>
+        <div class="settings-form-subkey">${pathText}</div>
+        <select id="field-${pathText}" class="settings-select" data-setting-path="${pathText}" data-setting-kind="boolean">
+          <option value="true" ${value ? "selected" : ""}>${t("settings_bool_true")}</option>
+          <option value="false" ${value ? "" : "selected"}>${t("settings_bool_false")}</option>
+        </select>
+      </div>
+    `;
+  }
+
+  if (options) {
+    return renderSettingsSelectField(value, kind, label, pathText, options);
+  }
+
+  if (kind === "number") {
+    const isInteger = Number.isInteger(value);
+    return `
+      <div class="settings-form-row">
+        <label class="settings-label" for="field-${pathText}">${escapeHtml(label)}</label>
+        <div class="settings-form-subkey">${pathText}</div>
+        <input
+          id="field-${pathText}"
+          class="settings-select"
+          type="number"
+          step="${isInteger ? "1" : "0.001"}"
+          value="${escapeHtml(String(value))}"
+          data-setting-path="${pathText}"
+          data-setting-kind="number"
+          data-setting-integer="${isInteger ? "true" : "false"}"
+        />
+      </div>
+    `;
+  }
+
+  if (kind === "string") {
+    return `
+      <div class="settings-form-row">
+        <label class="settings-label" for="field-${pathText}">${escapeHtml(label)}</label>
+        <div class="settings-form-subkey">${pathText}</div>
+        <input
+          id="field-${pathText}"
+          class="settings-select"
+          type="text"
+          value="${escapeHtml(value)}"
+          data-setting-path="${pathText}"
+          data-setting-kind="string"
+        />
+      </div>
+    `;
+  }
+
+  return `
+    <div class="settings-form-row">
+      <label class="settings-label" for="field-${pathText}">${escapeHtml(label)}</label>
+      <div class="settings-form-subkey">${pathText}</div>
+      <textarea
+        id="field-${pathText}"
+        class="settings-form-textarea"
+        spellcheck="false"
+        data-setting-path="${pathText}"
+        data-setting-kind="json"
+      >${escapeHtml(JSON.stringify(value, null, 2))}</textarea>
+    </div>
+  `;
+}
+
+function renderSettingsSectionList() {
+  const list = document.getElementById("settings-section-list");
+  if (!list) {
+    return;
+  }
+
+  list.innerHTML = SETTINGS_SECTIONS.map((item) => {
+    const active = item.id === settingsActiveSectionId ? "active" : "";
+    return `<button type="button" class="settings-section-item ${active}" data-section-id="${item.id}">${t(item.labelKey)}</button>`;
+  }).join("");
+}
+
+function renderSettingsSectionContent() {
+  const def = getSettingsSectionDef();
+  const titleNode = document.getElementById("settings-section-title");
+  const descNode = document.getElementById("settings-section-desc");
+  const formNode = document.getElementById("settings-config-form");
+
+  if (!titleNode || !descNode || !formNode) {
+    return;
+  }
+
+  titleNode.textContent = t(def.labelKey);
+  descNode.textContent = t(def.descKey);
+
+  if (def.special === "demo_tools") {
+    formNode.innerHTML = `<div class="settings-form-empty">${t("settings_section_demo_tools_desc")}</div>`;
+    updateUploadBlockVisibility();
+    return;
+  }
+
+  const sectionValue = getByPath(settingsWorkingConfig, def.path);
+  if (!sectionValue || typeof sectionValue !== "object" || Array.isArray(sectionValue)) {
+    formNode.innerHTML = `<div class="settings-form-empty">${t("settings_form_empty")}</div>`;
+    updateUploadBlockVisibility();
+    return;
+  }
+
+  const keys = Array.isArray(def.includeKeys) ? def.includeKeys : Object.keys(sectionValue);
+  if (keys.length === 0) {
+    formNode.innerHTML = `<div class="settings-form-empty">${t("settings_form_empty")}</div>`;
+    updateUploadBlockVisibility();
+    return;
+  }
+
+  formNode.innerHTML = keys
+    .map((key) => {
+      const value = sectionValue[key];
+      const path = def.path ? `${def.path}.${key}` : key;
+      return renderSettingsField(path, value);
+    })
+    .join("");
+  updateUploadBlockVisibility();
+}
+
+function commitCurrentSectionEdits() {
+  const status = document.getElementById("settings-status");
+  const def = getSettingsSectionDef();
+  if (!settingsWorkingConfig || !def || def.special === "demo_tools") {
+    return true;
+  }
+
+  const formNode = document.getElementById("settings-config-form");
+  if (!formNode) {
+    return true;
+  }
+
+  const controls = Array.from(formNode.querySelectorAll("[data-setting-path]"));
+  try {
+    controls.forEach((node) => {
+      const path = node.getAttribute("data-setting-path");
+      const kind = node.getAttribute("data-setting-kind");
+      if (!path) {
+        return;
+      }
+
+      let parsedValue = node.value;
+      if (kind === "boolean") {
+        parsedValue = node.value === "true";
+      } else if (kind === "number") {
+        const raw = String(node.value || "").trim();
+        if (!raw.length) {
+          throw new Error(`${settingsFieldLabel(path)}: ${t("settings_invalid_number")}`);
+        }
+        const num = Number(raw);
+        if (!Number.isFinite(num)) {
+          throw new Error(`${settingsFieldLabel(path)}: ${t("settings_invalid_number")}`);
+        }
+        parsedValue = node.getAttribute("data-setting-integer") === "true" ? Math.round(num) : num;
+      } else if (kind === "language-array") {
+        const checked = Array.from(node.querySelectorAll("input[type='checkbox']:checked"))
+          .map((item) => item.value)
+          .filter(Boolean);
+        if (checked.length === 0) {
+          throw new Error(
+            `${settingsFieldLabel(path)}: ${currentLanguage === "zh-CN" ? "至少选择一种语言" : "Select at least one language"}`
+          );
+        }
+        parsedValue = checked;
+      } else if (kind === "json") {
+        parsedValue = JSON.parse(node.value);
+      }
+
+      setByPath(settingsWorkingConfig, path, parsedValue);
+    });
+
+    const langs = settingsWorkingConfig?.frontend?.available_languages;
+    if (Array.isArray(langs) && langs.length > 0) {
+      availableLanguages = langs;
+    }
+    syncModeFromRaw(settingsWorkingConfig);
+  } catch (err) {
+    status.textContent = formatText("settings_status_save_fail", { error: String(err.message || err) });
+    return false;
+  }
+
+  return true;
+}
+
+function switchSettingsSection(nextId) {
+  if (nextId === settingsActiveSectionId) {
+    return;
+  }
+  if (!commitCurrentSectionEdits()) {
+    return;
+  }
+  settingsActiveSectionId = nextId;
+  renderSettingsSectionList();
+  renderSettingsSectionContent();
 }
 
 function setLanguage(language) {
@@ -528,7 +1187,8 @@ function applyStaticI18n() {
   const autoBtn = document.getElementById("toggle-auto-btn");
   autoBtn.textContent = autoRefresh ? t("btn_auto_on") : t("btn_auto_off");
   updateModeSelectorsLabel();
-  updateVlmEnabledSelectorLabel();
+  renderSettingsSectionList();
+  renderSettingsSectionContent();
   updateUploadBlockVisibility();
 }
 
@@ -552,71 +1212,35 @@ function updateModeSelectorsLabel() {
   }
 }
 
-function updateVlmEnabledSelectorLabel() {
-  const select = document.getElementById("settings-vlm-enabled");
-  if (!select) {
-    return;
-  }
-  const current = select.value || "false";
-  select.innerHTML = `
-      <option value="true">${t("settings_vlm_enabled_true")}</option>
-      <option value="false">${t("settings_vlm_enabled_false")}</option>
-    `;
-  select.value = current === "true" ? "true" : "false";
-}
-
-function ensureRawVlm(raw) {
-  if (!raw.health || typeof raw.health !== "object") {
-    raw.health = {};
-  }
-  if (!raw.health.vlm || typeof raw.health.vlm !== "object") {
-    raw.health.vlm = {};
-  }
-  return raw.health.vlm;
-}
-
-function populateVlmInputs(raw) {
-  const vlm = raw?.health?.vlm || {};
-  const enabled = Boolean(vlm.enabled);
-  document.getElementById("settings-vlm-enabled").value = enabled ? "true" : "false";
-  document.getElementById("settings-vlm-provider").value = vlm.provider || "openai";
-  document.getElementById("settings-vlm-model").value = vlm.model || "gpt-4o-mini";
-  document.getElementById("settings-vlm-endpoint").value = vlm.endpoint || "https://api.openai.com/v1/chat/completions";
-  document.getElementById("settings-vlm-api-key-env").value = vlm.api_key_env || "OPENAI_API_KEY";
-  document.getElementById("settings-vlm-timeout").value = String(vlm.timeout_seconds || 20);
-}
-
-function applyVlmInputsToRaw(raw) {
-  const vlm = ensureRawVlm(raw);
-  vlm.enabled = document.getElementById("settings-vlm-enabled").value === "true";
-
-  const provider = document.getElementById("settings-vlm-provider").value.trim();
-  const model = document.getElementById("settings-vlm-model").value.trim();
-  const endpoint = document.getElementById("settings-vlm-endpoint").value.trim();
-  const apiKeyEnv = document.getElementById("settings-vlm-api-key-env").value.trim();
-  const timeoutRaw = Number(document.getElementById("settings-vlm-timeout").value);
-
-  vlm.provider = provider || "openai";
-  vlm.model = model || "gpt-4o-mini";
-  vlm.endpoint = endpoint || "https://api.openai.com/v1/chat/completions";
-  vlm.api_key_env = apiKeyEnv || "OPENAI_API_KEY";
-  vlm.timeout_seconds = Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? Math.round(timeoutRaw) : 20;
-}
-
 function updateUploadBlockVisibility() {
   const block = document.getElementById("settings-upload-block");
   const status = document.getElementById("settings-upload-status");
+  const uploadBtn = document.getElementById("settings-upload");
+  const analyzeBtn = document.getElementById("settings-analyze");
   if (!block || !status) {
     return;
   }
 
-  const show = currentRunMode === "demo" && currentDemoSource === "uploaded_video";
-  block.classList.toggle("hidden", !show);
+  const inDemoToolSection = settingsActiveSectionId === "demo_tools";
+  block.classList.toggle("hidden", !inDemoToolSection);
 
-  if (!show) {
+  if (!inDemoToolSection) {
     status.textContent = "";
+    if (uploadBtn) uploadBtn.disabled = false;
+    if (analyzeBtn) analyzeBtn.disabled = false;
     return;
   }
+
+  const modeReady = currentRunMode === "demo" && currentDemoSource === "uploaded_video";
+  if (!modeReady) {
+    status.textContent = t("settings_demo_tools_hint");
+    if (uploadBtn) uploadBtn.disabled = true;
+    if (analyzeBtn) analyzeBtn.disabled = true;
+    return;
+  }
+
+  if (uploadBtn) uploadBtn.disabled = false;
+  if (analyzeBtn) analyzeBtn.disabled = false;
 
   if (!uploadedVideoName) {
     status.textContent = t("upload_status_none");
@@ -1444,17 +2068,6 @@ async function saveInitZones() {
   await loadDashboard(true);
 }
 
-function populateLanguageSelect(selected = "zh-CN") {
-  const select = document.getElementById("settings-language");
-  select.innerHTML = availableLanguages
-    .map((lang) => {
-      const label = lang === "zh-CN" ? "简体中文" : "English";
-      return `<option value="${lang}">${label}</option>`;
-    })
-    .join("");
-  select.value = availableLanguages.includes(selected) ? selected : availableLanguages[0];
-}
-
 function shouldForceDashboardRefresh() {
   return currentRunMode === "demo" && currentDemoSource === "virtual";
 }
@@ -1464,14 +2077,6 @@ function syncModeFromRaw(raw) {
   currentDemoSource = raw?.app?.demo_source || "virtual";
   updateModeSelectorsLabel();
   updateUploadBlockVisibility();
-}
-
-function applySelectionsToRaw(raw) {
-  if (!raw.app || typeof raw.app !== "object") {
-    raw.app = {};
-  }
-  raw.app.run_mode = document.getElementById("settings-run-mode").value;
-  raw.app.demo_source = document.getElementById("settings-demo-source").value;
 }
 
 async function loadDemoStatus() {
@@ -1792,16 +2397,21 @@ async function loadSettingsConfig() {
     }
     const payload = await response.json();
     const raw = payload.config || {};
-    const langs = raw.frontend?.available_languages;
+
+    settingsRawConfig = deepClone(raw);
+    settingsWorkingConfig = deepClone(raw);
+
+    const langs = settingsWorkingConfig?.frontend?.available_languages;
     if (Array.isArray(langs) && langs.length > 0) {
       availableLanguages = langs;
     }
-    const selected = raw.frontend?.default_language || currentLanguage;
-    populateLanguageSelect(selected);
+
     syncModeFromRaw(raw);
-    updateVlmEnabledSelectorLabel();
-    populateVlmInputs(raw);
-    document.getElementById("settings-editor").value = JSON.stringify(raw, null, 2);
+    if (!SETTINGS_SECTIONS.some((item) => item.id === settingsActiveSectionId)) {
+      settingsActiveSectionId = SETTINGS_SECTIONS[0].id;
+    }
+    renderSettingsSectionList();
+    renderSettingsSectionContent();
     status.textContent = t("settings_status_loaded");
     await loadDemoStatus();
   } catch (err) {
@@ -1812,25 +2422,15 @@ async function loadSettingsConfig() {
 async function saveSettingsConfig() {
   const status = document.getElementById("settings-status");
   status.textContent = t("settings_status_saving");
-
-  let raw;
-  try {
-    raw = JSON.parse(document.getElementById("settings-editor").value);
-  } catch (err) {
-    status.textContent = formatText("settings_status_save_fail", { error: "JSON parse error" });
+  if (!settingsWorkingConfig) {
+    status.textContent = formatText("settings_status_save_fail", { error: "settings not loaded" });
+    return;
+  }
+  if (!commitCurrentSectionEdits()) {
     return;
   }
 
-  if (!raw.frontend || typeof raw.frontend !== "object") {
-    raw.frontend = {};
-  }
-  applySelectionsToRaw(raw);
-  applyVlmInputsToRaw(raw);
-  raw.frontend.default_language = document.getElementById("settings-language").value;
-  if (!Array.isArray(raw.frontend.available_languages) || raw.frontend.available_languages.length === 0) {
-    raw.frontend.available_languages = availableLanguages;
-  }
-  document.getElementById("settings-editor").value = JSON.stringify(raw, null, 2);
+  const raw = deepClone(settingsWorkingConfig);
 
   const response = await fetch("/api/config/raw", {
     method: "POST",
@@ -1853,7 +2453,7 @@ async function saveSettingsConfig() {
   updateModeSelectorsLabel();
   updateUploadBlockVisibility();
   status.textContent = t("settings_status_saved");
-  await loadDemoStatus();
+  await loadSettingsConfig();
   await loadDashboard(shouldForceDashboardRefresh());
 }
 
@@ -1911,20 +2511,40 @@ function bindEvents() {
   document.getElementById("settings-save").addEventListener("click", saveSettingsConfig);
   document.getElementById("settings-upload").addEventListener("click", uploadDemoVideo);
   document.getElementById("settings-analyze").addEventListener("click", analyzeDemoVideo);
-  document.getElementById("settings-language").addEventListener("change", (event) => {
-    setLanguage(event.target.value);
-  });
-  document.getElementById("settings-run-mode").addEventListener("change", (event) => {
-    currentRunMode = event.target.value;
-    updateUploadBlockVisibility();
-    if (currentRunMode === "real") {
-      document.getElementById("settings-status").textContent = t("mode_real_reserved");
-    }
-  });
-  document.getElementById("settings-demo-source").addEventListener("change", (event) => {
-    currentDemoSource = event.target.value;
-    updateUploadBlockVisibility();
-  });
+  const languageSelect = document.getElementById("settings-language");
+  if (languageSelect) {
+    languageSelect.addEventListener("change", (event) => {
+      setLanguage(event.target.value);
+    });
+  }
+  const runModeSelect = document.getElementById("settings-run-mode");
+  if (runModeSelect) {
+    runModeSelect.addEventListener("change", (event) => {
+      currentRunMode = event.target.value;
+      updateUploadBlockVisibility();
+      if (currentRunMode === "real") {
+        document.getElementById("settings-status").textContent = t("mode_real_reserved");
+      }
+    });
+  }
+  const demoSourceSelect = document.getElementById("settings-demo-source");
+  if (demoSourceSelect) {
+    demoSourceSelect.addEventListener("change", (event) => {
+      currentDemoSource = event.target.value;
+      updateUploadBlockVisibility();
+    });
+  }
+
+  const settingsSectionList = document.getElementById("settings-section-list");
+  if (settingsSectionList) {
+    settingsSectionList.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-section-id]");
+      if (!btn) {
+        return;
+      }
+      switchSettingsSection(btn.getAttribute("data-section-id"));
+    });
+  }
 
   initState.canvas = document.getElementById("init-canvas");
   initState.ctx = initState.canvas.getContext("2d");
