@@ -16,7 +16,10 @@ from hamsterpi.algorithms.spatial_analytics import SpatialAnalyzer
 from hamsterpi.algorithms.virtual_odometer import VirtualOdometer
 from hamsterpi.algorithms.visual_health import VisualHealthScanner
 from hamsterpi.config import SystemConfig
+from hamsterpi.logging_system import get_logger
 from hamsterpi.notifier import MacNotifier
+
+LOGGER = get_logger(__name__)
 
 
 class HamsterVisionPipeline:
@@ -252,8 +255,16 @@ class HamsterVisionPipeline:
         video_path: str | Path,
         max_frames: Optional[int] = None,
     ) -> Dict[str, object]:
+        LOGGER.info(
+            "Pipeline process_video started",
+            extra={"context": {"video_path": str(video_path), "max_frames": max_frames}},
+        )
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
+            LOGGER.error(
+                "Pipeline failed to open video",
+                extra={"context": {"video_path": str(video_path)}},
+            )
             raise RuntimeError(f"Failed to open video: {video_path}")
 
         fps = cap.get(cv2.CAP_PROP_FPS) or self.config.video.fps or 10
@@ -306,6 +317,20 @@ class HamsterVisionPipeline:
         trajectory = self.spatial.trajectory()
         if self.config.runtime.low_memory_mode and len(trajectory) > max_items:
             trajectory = trajectory[-max_items:]
+
+        LOGGER.info(
+            "Pipeline process_video completed",
+            extra={
+                "context": {
+                    "video_path": str(video_path),
+                    "source_fps": round(float(fps), 3),
+                    "frame_step": step,
+                    "processed_count": processed_count,
+                    "analyzed_count": analyzed_count,
+                    "skipped_count": skipped_count,
+                }
+            },
+        )
 
         return {
             "frames": list(frames),

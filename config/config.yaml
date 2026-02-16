@@ -119,3 +119,10 @@ frontend:
   available_languages:
     - zh-CN
     - en-US
+
+logging:
+  level: INFO
+  file_path: ./logs/hamsterpi.log
+  max_bytes: 5242880
+  backup_count: 5
+  console_enabled: true

@@ -113,6 +113,15 @@ const I18N = {
     settings_run_mode: "运行模式",
     settings_demo_source: "Demo 数据源",
     settings_language: "界面语言",
+    settings_vlm_title: "VLM API 配置",
+    settings_vlm_enabled: "VLM 启用",
+    settings_vlm_provider: "Provider",
+    settings_vlm_model: "模型",
+    settings_vlm_endpoint: "接口地址",
+    settings_vlm_api_key_env: "API Key 环境变量名",
+    settings_vlm_timeout: "超时（秒）",
+    settings_vlm_enabled_true: "启用",
+    settings_vlm_enabled_false: "禁用",
     settings_upload_label: "上传视频文件",
     settings_editor_label: "配置编辑器（JSON）",
     mode_demo: "Demo",
@@ -317,6 +326,15 @@ const I18N = {
     settings_run_mode: "Run Mode",
     settings_demo_source: "Demo Data Source",
     settings_language: "UI Language",
+    settings_vlm_title: "VLM API Config",
+    settings_vlm_enabled: "VLM Enabled",
+    settings_vlm_provider: "Provider",
+    settings_vlm_model: "Model",
+    settings_vlm_endpoint: "Endpoint",
+    settings_vlm_api_key_env: "API Key Env Name",
+    settings_vlm_timeout: "Timeout (seconds)",
+    settings_vlm_enabled_true: "Enabled",
+    settings_vlm_enabled_false: "Disabled",
     settings_upload_label: "Upload Video",
     settings_editor_label: "Configuration Editor (JSON)",
     mode_demo: "Demo",
@@ -510,6 +528,7 @@ function applyStaticI18n() {
   const autoBtn = document.getElementById("toggle-auto-btn");
   autoBtn.textContent = autoRefresh ? t("btn_auto_on") : t("btn_auto_off");
   updateModeSelectorsLabel();
+  updateVlmEnabledSelectorLabel();
   updateUploadBlockVisibility();
 }
 
@@ -531,6 +550,57 @@ function updateModeSelectorsLabel() {
     `;
     sourceSelect.value = currentDemoSource;
   }
+}
+
+function updateVlmEnabledSelectorLabel() {
+  const select = document.getElementById("settings-vlm-enabled");
+  if (!select) {
+    return;
+  }
+  const current = select.value || "false";
+  select.innerHTML = `
+      <option value="true">${t("settings_vlm_enabled_true")}</option>
+      <option value="false">${t("settings_vlm_enabled_false")}</option>
+    `;
+  select.value = current === "true" ? "true" : "false";
+}
+
+function ensureRawVlm(raw) {
+  if (!raw.health || typeof raw.health !== "object") {
+    raw.health = {};
+  }
+  if (!raw.health.vlm || typeof raw.health.vlm !== "object") {
+    raw.health.vlm = {};
+  }
+  return raw.health.vlm;
+}
+
+function populateVlmInputs(raw) {
+  const vlm = raw?.health?.vlm || {};
+  const enabled = Boolean(vlm.enabled);
+  document.getElementById("settings-vlm-enabled").value = enabled ? "true" : "false";
+  document.getElementById("settings-vlm-provider").value = vlm.provider || "openai";
+  document.getElementById("settings-vlm-model").value = vlm.model || "gpt-4o-mini";
+  document.getElementById("settings-vlm-endpoint").value = vlm.endpoint || "https://api.openai.com/v1/chat/completions";
+  document.getElementById("settings-vlm-api-key-env").value = vlm.api_key_env || "OPENAI_API_KEY";
+  document.getElementById("settings-vlm-timeout").value = String(vlm.timeout_seconds || 20);
+}
+
+function applyVlmInputsToRaw(raw) {
+  const vlm = ensureRawVlm(raw);
+  vlm.enabled = document.getElementById("settings-vlm-enabled").value === "true";
+
+  const provider = document.getElementById("settings-vlm-provider").value.trim();
+  const model = document.getElementById("settings-vlm-model").value.trim();
+  const endpoint = document.getElementById("settings-vlm-endpoint").value.trim();
+  const apiKeyEnv = document.getElementById("settings-vlm-api-key-env").value.trim();
+  const timeoutRaw = Number(document.getElementById("settings-vlm-timeout").value);
+
+  vlm.provider = provider || "openai";
+  vlm.model = model || "gpt-4o-mini";
+  vlm.endpoint = endpoint || "https://api.openai.com/v1/chat/completions";
+  vlm.api_key_env = apiKeyEnv || "OPENAI_API_KEY";
+  vlm.timeout_seconds = Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? Math.round(timeoutRaw) : 20;
 }
 
 function updateUploadBlockVisibility() {
@@ -1729,6 +1799,8 @@ async function loadSettingsConfig() {
     const selected = raw.frontend?.default_language || currentLanguage;
     populateLanguageSelect(selected);
     syncModeFromRaw(raw);
+    updateVlmEnabledSelectorLabel();
+    populateVlmInputs(raw);
     document.getElementById("settings-editor").value = JSON.stringify(raw, null, 2);
     status.textContent = t("settings_status_loaded");
     await loadDemoStatus();
@@ -1753,10 +1825,12 @@ async function saveSettingsConfig() {
     raw.frontend = {};
   }
   applySelectionsToRaw(raw);
+  applyVlmInputsToRaw(raw);
   raw.frontend.default_language = document.getElementById("settings-language").value;
   if (!Array.isArray(raw.frontend.available_languages) || raw.frontend.available_languages.length === 0) {
     raw.frontend.available_languages = availableLanguages;
   }
+  document.getElementById("settings-editor").value = JSON.stringify(raw, null, 2);
 
   const response = await fetch("/api/config/raw", {
     method: "POST",

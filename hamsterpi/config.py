@@ -188,6 +188,23 @@ class FrontendConfig(BaseModel):
         return self
 
 
+class LoggingConfig(BaseModel):
+    level: str = "INFO"
+    file_path: str = "./logs/hamsterpi.log"
+    max_bytes: int = Field(default=5 * 1024 * 1024, ge=1024)
+    backup_count: int = Field(default=5, ge=1, le=20)
+    console_enabled: bool = True
+
+    @field_validator("level")
+    @classmethod
+    def validate_level(cls, value: str) -> str:
+        allowed = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        level = value.strip().upper()
+        if level not in allowed:
+            raise ValueError(f"level must be one of {sorted(allowed)}")
+        return level
+
+
 class SystemConfig(BaseModel):
     app: AppConfig
     video: VideoConfig
@@ -200,6 +217,7 @@ class SystemConfig(BaseModel):
     inventory: InventoryConfig
     alerts: AlertsConfig
     frontend: FrontendConfig
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
 
 class ConfigError(RuntimeError):

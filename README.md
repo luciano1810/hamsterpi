@@ -28,10 +28,13 @@ hamsterpi/config.py                  # typed config loader + save helpers
 hamsterpi/pipeline.py                # low-memory real video pipeline
 hamsterpi/simulator.py               # synthetic 24h telemetry
 hamsterpi/main.py                    # FastAPI APIs + init-zone endpoints
+hamsterpi/log_viewer.py              # FastAPI log console (port 8002)
+hamsterpi/logging_system.py          # graded logging + rotating file parser
 hamsterpi/algorithms/*.py            # all algorithms
 web/index.html                       # dashboard + init-zone modal
 web/app.js                           # charts + zone-drawing logic
 web/styles.css                       # UI style
+web/logs/*                           # log console web UI
 ```
 
 ## Quick Start
@@ -40,15 +43,26 @@ web/styles.css                       # UI style
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+./scripts/run_all.sh
+```
+
+Manual mode (two terminals):
+
+```bash
+# Terminal A
 uvicorn hamsterpi.main:app --host 0.0.0.0 --port 8000
+# Terminal B
+uvicorn hamsterpi.log_viewer:app --host 0.0.0.0 --port 8002
 ```
 
 Open `http://<pi-ip>:8000`.
+Open `http://<pi-ip>:8002` for log console.
 
 ## Settings & Language
 
 - Click `设置 / Settings` in the top-right toolbar.
 - Built-in config editor can modify all project fields in JSON and persist to `config/config.yaml`.
+- Settings panel includes direct VLM API fields (`enabled/provider/model/endpoint/api_key_env/timeout_seconds`) and writes them back to `health.vlm`.
 - UI language is configurable in settings:
   - default: `zh-CN`
   - optional: `en-US`
@@ -125,6 +139,20 @@ Only motion periods are recorded/captured, reducing CPU and storage.
 - `GET /api/init/frame`
 - `POST /api/init/zones`
 - `GET /health`
+
+Log console APIs (`8002`):
+
+- `GET /api/logs?levels=INFO,ERROR&q=keyword&limit=500`
+- `GET /health`
+
+## Graded Logging
+
+- Log levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`.
+- Log output is written to `logging.file_path` (default: `./logs/hamsterpi.log`).
+- Rotating file is enabled via:
+  - `logging.max_bytes`
+  - `logging.backup_count`
+- Main app (`8000`) and log console (`8002`) share the same log file.
 
 ## Notes
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import time
 from collections import defaultdict
 from copy import deepcopy
 from datetime import datetime, timedelta
@@ -17,19 +18,62 @@ from pydantic import BaseModel, Field
 
 from hamsterpi.config import (
     ConfigError,
+    LoggingConfig,
     SystemConfig,
     default_config_path,
     load_config,
     load_raw_config,
     save_raw_config,
 )
+from hamsterpi.logging_system import configure_logging, get_logger, resolve_log_file
 from hamsterpi.pipeline import HamsterVisionPipeline
 from hamsterpi.simulator import VirtualDatasetGenerator
 
 app = FastAPI(title="HamsterPi Monitoring Demo", version="0.3.0")
 
+# Configure a safe default logger before config file is loaded.
+configure_logging(LoggingConfig())
+LOGGER = get_logger(__name__)
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 WEB_DIR = BASE_DIR / "web"
+
+
+@app.middleware("http")
+async def http_request_logger(request: Request, call_next):
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception as exc:  # noqa: BLE001
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+        LOGGER.exception(
+            "HTTP request failed",
+            extra={
+                "context": {
+                    "method": request.method,
+                    "path": request.url.path,
+                    "query": str(request.url.query),
+                    "elapsed_ms": elapsed_ms,
+                    "error": str(exc),
+                }
+            },
+        )
+        raise
+
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+    context = {
+        "method": request.method,
+        "path": request.url.path,
+        "status": response.status_code,
+        "elapsed_ms": elapsed_ms,
+    }
+    if response.status_code >= 500:
+        LOGGER.error("HTTP request completed", extra={"context": context})
+    elif response.status_code >= 400:
+        LOGGER.warning("HTTP request completed", extra={"context": context})
+    else:
+        LOGGER.info("HTTP request completed", extra={"context": context})
+    return response
 
 
 class InitZonesPayload(BaseModel):
@@ -475,6 +519,18 @@ class DashboardState:
     def __init__(self) -> None:
         self.lock = Lock()
         self.config = load_config(default_config_path())
+        log_path = configure_logging(self.config.logging)
+        LOGGER.info(
+            "Logger configured",
+            extra={
+                "context": {
+                    "log_file": str(log_path),
+                    "level": self.config.logging.level,
+                    "run_mode": self.config.app.run_mode,
+                    "demo_source": self.config.app.demo_source,
+                }
+            },
+        )
         self.generator = VirtualDatasetGenerator(self.config)
         self.payload = self.generator.generate(self.config.frontend.history_minutes)
         self.last_update = datetime.now()
@@ -507,6 +563,16 @@ class DashboardState:
         self.uploaded_analyzed_at = None
         self.uploaded_zone_required = True
         self.uploaded_zone_token = str(path.resolve())
+        LOGGER.info(
+            "Uploaded video registered",
+            extra={
+                "context": {
+                    "path": str(path),
+                    "display_name": display_name,
+                    "zone_required": True,
+                }
+            },
+        )
 
     def mark_uploaded_video_zones_initialized(self) -> None:
         if self.uploaded_video_path is None:
@@ -514,6 +580,10 @@ class DashboardState:
         self.activate_uploaded_demo_source()
         self.uploaded_zone_required = False
         self.uploaded_zone_token = str(self.uploaded_video_path.resolve())
+        LOGGER.info(
+            "Uploaded video zones initialized",
+            extra={"context": {"path": str(self.uploaded_video_path)}},
+        )
 
     def analyze_uploaded_video(self, max_frames: Optional[int] = None) -> Dict[str, Any]:
         self.activate_uploaded_demo_source()
@@ -541,13 +611,35 @@ class DashboardState:
         self.uploaded_analyzed_at = datetime.now()
         self.payload = payload
         self.last_update = datetime.now()
+        LOGGER.info(
+            "Uploaded video analyzed",
+            extra={
+                "context": {
+                    "path": str(self.uploaded_video_path),
+                    "display_name": self.uploaded_video_name,
+                    "max_frames": limit,
+                    "summary": payload.get("summary", {}),
+                }
+            },
+        )
         return payload
 
     def reload_from_disk(self) -> None:
         self.config = load_config(default_config_path())
+        configure_logging(self.config.logging)
         self.generator = VirtualDatasetGenerator(self.config)
         self.payload = self.generator.generate(self.config.frontend.history_minutes)
         self.last_update = datetime.now()
+        LOGGER.info(
+            "Config reloaded from disk",
+            extra={
+                "context": {
+                    "run_mode": self.config.app.run_mode,
+                    "demo_source": self.config.app.demo_source,
+                    "log_file": str(resolve_log_file(self.config.logging.file_path)),
+                }
+            },
+        )
 
     def dashboard_for_mode(self, refresh: bool = False) -> Dict[str, Any]:
         run_mode = self.config.app.run_mode
@@ -707,6 +799,7 @@ def _public_config(cfg: SystemConfig) -> Dict[str, Any]:
         "inventory": cfg.inventory.model_dump(),
         "alerts": cfg.alerts.model_dump(),
         "frontend": cfg.frontend.model_dump(),
+        "logging": cfg.logging.model_dump(),
     }
 
 
@@ -745,6 +838,10 @@ def save_raw_config_api(payload: RawConfigPayload) -> Dict[str, Any]:
 
         save_raw_config(payload.config, default_config_path())
         dashboard_state.reload_from_disk()
+        LOGGER.info(
+            "Raw config saved",
+            extra={"context": {"config_path": str(default_config_path())}},
+        )
         return {
             "status": "ok",
             "saved_at": datetime.now().isoformat(),
@@ -807,6 +904,16 @@ async def upload_demo_video(
             raise HTTPException(status_code=400, detail="Empty upload body")
 
         dashboard_state.set_uploaded_video(target, safe_name or target.name)
+        LOGGER.info(
+            "Demo video uploaded",
+            extra={
+                "context": {
+                    "path": str(target),
+                    "filename": safe_name or target.name,
+                    "size_bytes": total,
+                }
+            },
+        )
 
         return {
             "status": "ok",
@@ -831,6 +938,10 @@ def analyze_uploaded_video(max_frames: int = Query(default=0, ge=0, le=30000)) -
         try:
             payload = dashboard_state.analyze_uploaded_video(max_frames=frame_limit)
         except RuntimeError as exc:
+            LOGGER.warning(
+                "Analyze uploaded video rejected",
+                extra={"context": {"error": str(exc)}},
+            )
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         return {
@@ -923,6 +1034,7 @@ def save_init_zones(payload: InitZonesPayload) -> Dict[str, Any]:
         save_raw_config(updated, default_config_path())
         dashboard_state.reload_from_disk()
         dashboard_state.mark_uploaded_video_zones_initialized()
+        LOGGER.info("Zones saved", extra={"context": {"config_path": str(default_config_path())}})
 
         return {
             "status": "ok",

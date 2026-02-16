@@ -260,6 +260,31 @@
               <option value="en-US">English</option>
             </select>
 
+            <div id="settings-vlm-block" class="settings-upload">
+              <p class="settings-label" data-i18n="settings_vlm_title">VLM API 配置</p>
+
+              <label for="settings-vlm-enabled" class="settings-label" data-i18n="settings_vlm_enabled">VLM 启用</label>
+              <select id="settings-vlm-enabled" class="settings-select">
+                <option value="true">启用</option>
+                <option value="false">禁用</option>
+              </select>
+
+              <label for="settings-vlm-provider" class="settings-label" data-i18n="settings_vlm_provider">Provider</label>
+              <input id="settings-vlm-provider" type="text" class="settings-select" />
+
+              <label for="settings-vlm-model" class="settings-label" data-i18n="settings_vlm_model">Model</label>
+              <input id="settings-vlm-model" type="text" class="settings-select" />
+
+              <label for="settings-vlm-endpoint" class="settings-label" data-i18n="settings_vlm_endpoint">Endpoint</label>
+              <input id="settings-vlm-endpoint" type="text" class="settings-select" />
+
+              <label for="settings-vlm-api-key-env" class="settings-label" data-i18n="settings_vlm_api_key_env">API Key 环境变量</label>
+              <input id="settings-vlm-api-key-env" type="text" class="settings-select" />
+
+              <label for="settings-vlm-timeout" class="settings-label" data-i18n="settings_vlm_timeout">超时（秒）</label>
+              <input id="settings-vlm-timeout" type="number" min="1" step="1" class="settings-select" />
+            </div>
+
             <div id="settings-upload-block" class="settings-upload hidden">
               <label for="settings-video-file" class="settings-label" data-i18n="settings_upload_label">上传视频文件</label>
               <input id="settings-video-file" type="file" class="settings-file" accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/m4v,video/webm" />

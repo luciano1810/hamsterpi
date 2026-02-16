@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HamsterPi 分级日志台</title>
+    <link rel="stylesheet" href="/web/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">HamsterPi Logs</p>
+          <h1>分级日志台</h1>
+          <p class="sub">端口 8002：按级别查看全部日志，支持关键词过滤和自动刷新。</p>
+        </div>
+      </header>
+
+      <section class="panel panel-wide">
+        <div class="panel-head">
+          <h2>筛选器</h2>
+          <p id="meta-line">-</p>
+        </div>
+        <div class="settings-grid">
+          <div class="settings-tools">
+            <label class="settings-label">日志级别</label>
+            <div class="settings-btns">
+              <label><input type="checkbox" class="lv" value="DEBUG" checked /> DEBUG</label>
+              <label><input type="checkbox" class="lv" value="INFO" checked /> INFO</label>
+              <label><input type="checkbox" class="lv" value="WARNING" checked /> WARNING</label>
+              <label><input type="checkbox" class="lv" value="ERROR" checked /> ERROR</label>
+              <label><input type="checkbox" class="lv" value="CRITICAL" checked /> CRITICAL</label>
+            </div>
+
+            <label for="q" class="settings-label">关键词</label>
+            <input id="q" class="settings-select" type="text" placeholder="路径、错误码、消息内容" />
+
+            <label for="limit" class="settings-label">返回条数</label>
+            <select id="limit" class="settings-select">
+              <option value="200">200</option>
+              <option value="500" selected>500</option>
+              <option value="1000">1000</option>
+              <option value="2000">2000</option>
+            </select>
+
+            <div class="settings-btns">
+              <button id="refresh" class="btn btn-solid btn-xs">刷新</button>
+              <button id="toggle-auto" class="btn btn-ghost btn-xs">自动刷新：开</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="kpi-grid" id="kpi-grid"></section>
+
+      <section class="panel panel-wide">
+        <div class="panel-head">
+          <h2>日志明细</h2>
+          <p id="status-line">加载中...</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>级别</th>
+                <th>模块</th>
+                <th>消息</th>
+              </tr>
+            </thead>
+            <tbody id="log-rows"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    <script src="/web/app.js" type="module"></script>
+  </body>
+</html>
