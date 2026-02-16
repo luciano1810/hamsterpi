@@ -25,12 +25,15 @@ LOGGER = get_logger(__name__)
 class HamsterVisionPipeline:
     """Unified real-video processing optimized for Raspberry Pi Zero 2W."""
 
-    def __init__(self, config: SystemConfig) -> None:
+    def __init__(self, config: SystemConfig, always_analyze: bool = False) -> None:
         self.config = config
+        self.always_analyze = always_analyze
 
         self.analysis_width, self.analysis_height = self._analysis_size()
-        self.scale_x = self.analysis_width / max(self.config.video.frame_width, 1)
-        self.scale_y = self.analysis_height / max(self.config.video.frame_height, 1)
+        self.video_scale_x = self.analysis_width / max(self.config.video.frame_width, 1)
+        self.video_scale_y = self.analysis_height / max(self.config.video.frame_height, 1)
+        self.spatial_scale_x = self.analysis_width / max(self.config.spatial.frame_width, 1)
+        self.spatial_scale_y = self.analysis_height / max(self.config.spatial.frame_height, 1)
 
         marker_ranges = [(entry.lower, entry.upper) for entry in config.wheel.marker_hsv_ranges]
         vlm_cfg = config.health.vlm
@@ -46,6 +49,8 @@ class HamsterVisionPipeline:
         scaled_fence = self._scale_polygon(config.spatial.fence_polygon)
         scaled_wheel_mask = self._scale_polygon(config.spatial.wheel_mask_polygon)
         scaled_zones = {name: self._scale_polygon(poly) for name, poly in config.spatial.zones.items()}
+        self._spatial_bev_homography, spatial_fence, spatial_zones = self._build_spatial_bev(scaled_fence, scaled_zones)
+        self._spatial_bev_enabled = self._spatial_bev_homography is not None
 
         self.odometer = VirtualOdometer(
             wheel_diameter_cm=config.wheel.diameter_cm,
@@ -55,12 +60,14 @@ class HamsterVisionPipeline:
         self.spatial = SpatialAnalyzer(
             frame_width=self.analysis_width,
             frame_height=self.analysis_height,
-            zones=scaled_zones,
-            fence_polygon=scaled_fence,
+            zones=spatial_zones,
+            fence_polygon=spatial_fence,
             wheel_mask_polygon=scaled_wheel_mask,
+            motion_fence_polygon=scaled_fence,
+            bev_homography=self._spatial_bev_homography,
         )
         self.health = VisualHealthScanner(
-            baseline_body_area_px=max(1, int(config.health.baseline_body_area_px * self.scale_x * self.scale_y)),
+            baseline_body_area_px=max(1, int(config.health.baseline_body_area_px * self.video_scale_x * self.video_scale_y)),
             vlm_config=vlm_cfg,
         )
         self.inventory = InventoryWatcher(
@@ -72,7 +79,7 @@ class HamsterVisionPipeline:
             frame_shape=(self.analysis_height, self.analysis_width),
         )
         self.behavior = BehavioralLogger(
-            hideout_polygon=scaled_zones.get("hideout_zone", scaled_fence),
+            hideout_polygon=spatial_zones.get("hideout_zone", spatial_fence),
         )
         self.environment = EnvironmentAnalyzer(
             low_light_threshold=config.environment.low_light_threshold,
@@ -106,9 +113,84 @@ class HamsterVisionPipeline:
         self._last_health_capture: Optional[datetime] = None
         self._frame_index = 0
 
+    @staticmethod
+    def _order_quad(points: np.ndarray) -> np.ndarray:
+        sums = points.sum(axis=1)
+        diffs = np.diff(points, axis=1).reshape(-1)
+        ordered = np.zeros((4, 2), dtype=np.float32)
+        ordered[0] = points[np.argmin(sums)]  # top-left
+        ordered[2] = points[np.argmax(sums)]  # bottom-right
+        ordered[1] = points[np.argmin(diffs)]  # top-right
+        ordered[3] = points[np.argmax(diffs)]  # bottom-left
+        return ordered
+
+    def _polygon_to_quad(self, polygon: Sequence[Sequence[int]]) -> Optional[np.ndarray]:
+        if len(polygon) < 3:
+            return None
+        pts = np.array(polygon, dtype=np.float32)
+        if pts.shape[0] == 4:
+            quad = pts
+        else:
+            rect = cv2.minAreaRect(pts)
+            quad = cv2.boxPoints(rect)
+        ordered = self._order_quad(np.array(quad, dtype=np.float32))
+        if abs(cv2.contourArea(ordered.astype(np.float32))) < 20.0:
+            return None
+        return ordered
+
+    def _transform_polygon(self, polygon: Sequence[Sequence[int]], matrix: np.ndarray) -> List[Tuple[int, int]]:
+        if len(polygon) < 3:
+            return [(int(p[0]), int(p[1])) for p in polygon]
+
+        src = np.array(polygon, dtype=np.float32).reshape(-1, 1, 2)
+        projected = cv2.perspectiveTransform(src, matrix).reshape(-1, 2)
+        out: List[Tuple[int, int]] = []
+        for x, y in projected:
+            px = int(round(np.clip(float(x), 0, self.analysis_width - 1)))
+            py = int(round(np.clip(float(y), 0, self.analysis_height - 1)))
+            out.append((px, py))
+        unique = list(dict.fromkeys(out))
+        return unique
+
+    def _build_spatial_bev(
+        self,
+        scaled_fence: List[Tuple[int, int]],
+        scaled_zones: Dict[str, List[Tuple[int, int]]],
+    ) -> Tuple[Optional[np.ndarray], List[Tuple[int, int]], Dict[str, List[Tuple[int, int]]]]:
+        src_quad = self._polygon_to_quad(scaled_fence)
+        if src_quad is None:
+            return None, scaled_fence, scaled_zones
+
+        dst_quad = np.array(
+            [
+                [0.0, 0.0],
+                [float(self.analysis_width - 1), 0.0],
+                [float(self.analysis_width - 1), float(self.analysis_height - 1)],
+                [0.0, float(self.analysis_height - 1)],
+            ],
+            dtype=np.float32,
+        )
+        homography = cv2.getPerspectiveTransform(src_quad, dst_quad)
+        if not np.isfinite(homography).all():
+            return None, scaled_fence, scaled_zones
+        if abs(np.linalg.det(homography)) < 1e-9:
+            return None, scaled_fence, scaled_zones
+
+        bev_fence = self._transform_polygon(scaled_fence, homography)
+        if len(bev_fence) < 3:
+            return None, scaled_fence, scaled_zones
+
+        bev_zones: Dict[str, List[Tuple[int, int]]] = {}
+        for name, polygon in scaled_zones.items():
+            transformed = self._transform_polygon(polygon, homography)
+            bev_zones[name] = transformed if len(transformed) >= 3 else polygon
+        return homography, bev_fence, bev_zones
+
     def _analysis_size(self) -> Tuple[int, int]:
-        width = int(self.config.video.frame_width * self.config.runtime.analysis_scale)
-        height = int(self.config.video.frame_height * self.config.runtime.analysis_scale)
+        base_width = max(self.config.video.frame_width, self.config.spatial.frame_width)
+        base_height = max(self.config.video.frame_height, self.config.spatial.frame_height)
+        width = int(base_width * self.config.runtime.analysis_scale)
+        height = int(base_height * self.config.runtime.analysis_scale)
 
         width = min(max(width, 64), self.config.runtime.max_analysis_width)
         height = min(max(height, 64), self.config.runtime.max_analysis_height)
@@ -117,23 +199,23 @@ class HamsterVisionPipeline:
     def _scale_roi(self, roi: Sequence[int]) -> List[int]:
         x, y, w, h = roi
         return [
-            int(round(x * self.scale_x)),
-            int(round(y * self.scale_y)),
-            max(1, int(round(w * self.scale_x))),
-            max(1, int(round(h * self.scale_y))),
+            int(round(x * self.video_scale_x)),
+            int(round(y * self.video_scale_y)),
+            max(1, int(round(w * self.video_scale_x))),
+            max(1, int(round(h * self.video_scale_y))),
         ]
 
     def _scale_polygon(self, polygon: Sequence[Sequence[int]]) -> List[Tuple[int, int]]:
         result = []
         for x, y in polygon:
-            result.append((int(round(x * self.scale_x)), int(round(y * self.scale_y))))
+            result.append((int(round(x * self.spatial_scale_x)), int(round(y * self.spatial_scale_y))))
         return result
 
     def _to_original_point(self, point: Optional[Tuple[int, int]]) -> Optional[Tuple[int, int]]:
         if point is None:
             return None
-        x = int(round(point[0] / max(self.scale_x, 1e-6)))
-        y = int(round(point[1] / max(self.scale_y, 1e-6)))
+        x = int(round(point[0] / max(self.spatial_scale_x, 1e-6)))
+        y = int(round(point[1] / max(self.spatial_scale_y, 1e-6)))
         return x, y
 
     def _prepare_frame(self, frame: np.ndarray) -> np.ndarray:
@@ -166,7 +248,8 @@ class HamsterVisionPipeline:
         if self.motion_trigger is not None:
             motion_state = self.motion_trigger.update(analysis_frame, timestamp)
             motion_payload = motion_state.to_dict()
-            should_analyze = motion_state.capture_active or motion_state.is_motion or motion_state.start_capture
+            if not self.always_analyze:
+                should_analyze = motion_state.capture_active or motion_state.is_motion or motion_state.start_capture
 
         if not should_analyze:
             return {
@@ -181,7 +264,7 @@ class HamsterVisionPipeline:
         spatial_metrics = self.spatial.update(analysis_frame, timestamp, dt).to_dict()
 
         centroid_scaled = tuple(spatial_metrics["centroid"]) if spatial_metrics["centroid"] else None
-        centroid_original = self._to_original_point(centroid_scaled)
+        centroid_output = centroid_scaled if self._spatial_bev_enabled else self._to_original_point(centroid_scaled)
 
         behavior_metrics = self.behavior.update(
             timestamp=timestamp,
@@ -194,8 +277,8 @@ class HamsterVisionPipeline:
         if transfer_points is not None:
             scaled_transfer_points = [
                 (
-                    int(round(point[0] * self.scale_x)),
-                    int(round(point[1] * self.scale_y)),
+                    int(round(point[0] * self.video_scale_x)),
+                    int(round(point[1] * self.video_scale_y)),
                 )
                 for point in transfer_points
             ]
@@ -235,7 +318,7 @@ class HamsterVisionPipeline:
             "odometer": odometer_metrics,
             "spatial": {
                 **spatial_metrics,
-                "centroid": centroid_original,
+                "centroid": centroid_output,
             },
             "behavior": behavior_metrics,
             "inventory": inventory_metrics,
@@ -342,6 +425,7 @@ class HamsterVisionPipeline:
                 "skipped_count": skipped_count,
                 "analysis_width": self.analysis_width,
                 "analysis_height": self.analysis_height,
+                "spatial_bev_enabled": self._spatial_bev_enabled,
                 "spatial": self.spatial.summary(),
                 "zone_dwell": self.spatial.zone_dwell_seconds(),
                 "trajectory": trajectory,

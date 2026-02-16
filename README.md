@@ -85,9 +85,12 @@ In UI settings, you can switch mode directly:
 
 1. Select `Demo` + `Virtual Data` for synthetic dashboard.
 2. Select `Demo` + `Uploaded Video Analysis`, then:
+   - browser extracts and uploads the original-resolution first frame first (for zone initialization background)
    - browser compresses video locally first
    - if browser codec/path is unsupported, fallback uploads original file
    - uploads compressed video to backend
+   - uploaded demo videos are retained in `app.demo_upload_dir`
+   - you can select previously uploaded videos in Settings to skip compression/upload and jump to zone initialization
    - after each new upload, initialize zones on uploaded video frame first
    - click analyze to generate dashboard
 3. Select `Real` to enter reserved mode (camera integration placeholder).
@@ -108,11 +111,17 @@ APIs used:
 
 - `GET /api/init/frame?source=auto|uploaded|config` preview frame + existing regions
 - `POST /api/init/zones` persist user-defined regions and hot-reload config
+- uploaded preview source priority in uploaded-video mode:
+  1. original first-frame image uploaded via `POST /api/demo/upload-preview`
+  2. fallback to uploaded video frame if preview is unavailable
 
 Note for uploaded-video demo mode:
 
+- `POST /api/demo/upload-preview` uploads full-resolution first frame before video compression/upload
 - `POST /api/demo/upload` marks uploaded video as `zone_required=true`
+- `POST /api/demo/select-uploaded` selects an existing uploaded file and marks `zone_required=true`
 - analysis is blocked until zones are saved once via `POST /api/init/zones`
+- spatial analytics uses BEV-projected coordinates derived from fence polygon; wheel mask remains in original camera plane (not BEV transformed)
 
 ## Motion Trigger
 
@@ -132,7 +141,9 @@ Only motion periods are recorded/captured, reducing CPU and storage.
 - `GET /api/config/raw`
 - `POST /api/config/raw`
 - `GET /api/demo/status`
+- `POST /api/demo/upload-preview`
 - `POST /api/demo/upload`
+- `POST /api/demo/select-uploaded`
 - `POST /api/demo/analyze-upload`
 - `GET /api/dashboard`
 - `GET /api/dashboard?refresh=true`

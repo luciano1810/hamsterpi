@@ -37,6 +37,8 @@ LOGGER = get_logger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 WEB_DIR = BASE_DIR / "web"
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".webm"}
+PREVIEW_DIR_NAME = ".preview_frames"
 
 
 @app.middleware("http")
@@ -80,6 +82,8 @@ class InitZonesPayload(BaseModel):
     fence_polygon: List[List[int]] = Field(min_length=3)
     wheel_mask_polygon: List[List[int]] = Field(min_length=3)
     zones: Dict[str, List[List[int]]]
+    frame_width: Optional[int] = Field(default=None, ge=1)
+    frame_height: Optional[int] = Field(default=None, ge=1)
     wheel_roi: Optional[List[int]] = None
     inventory_rois: Optional[Dict[str, List[int]]] = None
     bedding_roi: Optional[List[int]] = None
@@ -94,6 +98,109 @@ def _resolve_upload_dir(config: SystemConfig) -> Path:
     if path.is_absolute():
         return path
     return BASE_DIR / path
+
+
+def _is_allowed_video_file(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in ALLOWED_VIDEO_EXTENSIONS
+
+
+def _resolve_preview_dir(upload_dir: Path) -> Path:
+    return upload_dir / PREVIEW_DIR_NAME
+
+
+def _normalize_preview_token(token: str) -> str:
+    raw = Path(token).name.strip()
+    normalized = "".join(ch for ch in raw if ch.isalnum() or ch in {"-", "_"})
+    return normalized[:80]
+
+
+def _preview_temp_path(upload_dir: Path, token: str) -> Path:
+    return _resolve_preview_dir(upload_dir) / f"temp_{token}.jpg"
+
+
+def _preview_video_path(upload_dir: Path, video_key: str) -> Path:
+    return _resolve_preview_dir(upload_dir) / f"{video_key}.jpg"
+
+
+def _find_preview_for_video(config: SystemConfig, video_path: Optional[Path]) -> Optional[Path]:
+    if video_path is None:
+        return None
+    upload_dir = _resolve_upload_dir(config)
+    preview_path = _preview_video_path(upload_dir, video_path.name)
+    if preview_path.exists():
+        return preview_path
+    return None
+
+
+def _bind_preview_to_video(config: SystemConfig, video_path: Path, preview_token: str) -> Optional[Path]:
+    upload_dir = _resolve_upload_dir(config)
+    preview_dir = _resolve_preview_dir(upload_dir)
+    preview_dir.mkdir(parents=True, exist_ok=True)
+
+    final_path = _preview_video_path(upload_dir, video_path.name)
+    token = _normalize_preview_token(preview_token)
+    if token:
+        temp_path = _preview_temp_path(upload_dir, token)
+        if temp_path.exists():
+            if final_path.exists():
+                try:
+                    final_path.unlink()
+                except OSError:
+                    pass
+            try:
+                temp_path.replace(final_path)
+            except OSError:
+                return None
+            return final_path
+
+    if final_path.exists():
+        return final_path
+    return None
+
+
+def _list_uploaded_videos(config: SystemConfig, active_video_path: Optional[Path]) -> List[Dict[str, Any]]:
+    upload_dir = _resolve_upload_dir(config)
+    if not upload_dir.exists() or not upload_dir.is_dir():
+        return []
+
+    active_resolved: Optional[Path] = None
+    if active_video_path is not None:
+        try:
+            active_resolved = active_video_path.resolve()
+        except OSError:
+            active_resolved = active_video_path
+
+    entries: List[Dict[str, Any]] = []
+    for path in upload_dir.iterdir():
+        if not _is_allowed_video_file(path):
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+
+        try:
+            path_resolved = path.resolve()
+        except OSError:
+            path_resolved = path
+
+        entries.append(
+            {
+                "video_key": path.name,
+                "display_name": path.name,
+                "path": str(path),
+                "size_bytes": int(stat.st_size),
+                "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "is_active": bool(active_resolved is not None and path_resolved == active_resolved),
+                "has_preview": _preview_video_path(upload_dir, path.name).exists(),
+                "_mtime": float(stat.st_mtime),
+            }
+        )
+
+    entries.sort(key=lambda item: (item.get("_mtime", 0.0), item.get("video_key", "")), reverse=True)
+    for item in entries:
+        item.pop("_mtime", None)
+    return entries
 
 
 def _empty_dashboard_payload(config: SystemConfig, source: str, status_message: str) -> Dict[str, Any]:
@@ -446,11 +553,19 @@ def _dashboard_from_pipeline_result(result: Dict[str, Any], config: SystemConfig
         "generated_at": datetime.now().isoformat(),
         "meta": {
             "history_minutes": config.frontend.history_minutes,
-            "frame_width": config.video.frame_width,
-            "frame_height": config.video.frame_height,
+            "frame_width": config.spatial.frame_width,
+            "frame_height": config.spatial.frame_height,
             "source": f"uploaded-video:{source_name}",
             "runtime_profile": config.runtime.profile,
             "status_message": "video analyzed",
+            "analysis_processed_count": int(summary.get("processed_count", 0)),
+            "analysis_analyzed_count": int(summary.get("analyzed_count", 0)),
+            "analysis_skipped_count": int(summary.get("skipped_count", 0)),
+            "analysis_source_fps": float(summary.get("source_fps", 0.0)),
+            "analysis_frame_step": int(summary.get("frame_step", 0)),
+            "analysis_width": int(summary.get("analysis_width", 0)),
+            "analysis_height": int(summary.get("analysis_height", 0)),
+            "spatial_bev_enabled": bool(summary.get("spatial_bev_enabled", False)),
         },
         "summary": {
             "distance_km_24h": round(latest["distance_m_total"] / 1000.0, 3),
@@ -537,6 +652,7 @@ class DashboardState:
 
         self.uploaded_video_path: Optional[Path] = None
         self.uploaded_video_name: str = ""
+        self.uploaded_preview_path: Optional[Path] = None
         self.uploaded_payload: Optional[Dict[str, Any]] = None
         self.uploaded_analyzed_at: Optional[datetime] = None
         self.uploaded_zone_required: bool = False
@@ -555,10 +671,11 @@ class DashboardState:
         self.last_update = datetime.now()
         return self.payload
 
-    def set_uploaded_video(self, path: Path, display_name: str) -> None:
+    def set_uploaded_video(self, path: Path, display_name: str, preview_path: Optional[Path] = None) -> None:
         self.activate_uploaded_demo_source()
         self.uploaded_video_path = path
         self.uploaded_video_name = display_name
+        self.uploaded_preview_path = preview_path if preview_path is not None and preview_path.exists() else None
         self.uploaded_payload = None
         self.uploaded_analyzed_at = None
         self.uploaded_zone_required = True
@@ -569,6 +686,7 @@ class DashboardState:
                 "context": {
                     "path": str(path),
                     "display_name": display_name,
+                    "preview_path": str(self.uploaded_preview_path) if self.uploaded_preview_path else "",
                     "zone_required": True,
                 }
             },
@@ -603,7 +721,7 @@ class DashboardState:
         if limit is None:
             limit = max(300, self.config.runtime.max_frame_results * self.config.runtime.process_every_nth_frame)
 
-        pipeline = HamsterVisionPipeline(self.config)
+        pipeline = HamsterVisionPipeline(self.config, always_analyze=True)
         result = pipeline.process_video(self.uploaded_video_path, max_frames=limit)
         payload = _dashboard_from_pipeline_result(result, self.config, self.uploaded_video_name or self.uploaded_video_path.name)
 
@@ -654,6 +772,8 @@ class DashboardState:
             payload["meta"]["run_mode"] = "real"
             payload["meta"]["demo_source"] = demo_source
             payload["meta"]["uploaded_video_name"] = self.uploaded_video_name
+            payload["meta"]["uploaded_video_key"] = self.uploaded_video_path.name if self.uploaded_video_path else ""
+            payload["meta"]["uploaded_preview_available"] = bool(self.uploaded_preview_path and self.uploaded_preview_path.exists())
             payload["meta"]["uploaded_analyzed_at"] = self.uploaded_analyzed_at.isoformat() if self.uploaded_analyzed_at else ""
             payload["meta"]["uploaded_zone_required"] = self.uploaded_zone_required
             self.payload = payload
@@ -673,6 +793,8 @@ class DashboardState:
             payload["meta"]["run_mode"] = run_mode
             payload["meta"]["demo_source"] = demo_source
             payload["meta"]["uploaded_video_name"] = self.uploaded_video_name
+            payload["meta"]["uploaded_video_key"] = self.uploaded_video_path.name if self.uploaded_video_path else ""
+            payload["meta"]["uploaded_preview_available"] = bool(self.uploaded_preview_path and self.uploaded_preview_path.exists())
             payload["meta"]["uploaded_analyzed_at"] = self.uploaded_analyzed_at.isoformat() if self.uploaded_analyzed_at else ""
             payload["meta"]["uploaded_zone_required"] = self.uploaded_zone_required
             return payload
@@ -685,6 +807,8 @@ class DashboardState:
         payload["meta"]["run_mode"] = run_mode
         payload["meta"]["demo_source"] = demo_source
         payload["meta"]["uploaded_video_name"] = self.uploaded_video_name
+        payload["meta"]["uploaded_video_key"] = self.uploaded_video_path.name if self.uploaded_video_path else ""
+        payload["meta"]["uploaded_preview_available"] = bool(self.uploaded_preview_path and self.uploaded_preview_path.exists())
         payload["meta"]["uploaded_analyzed_at"] = self.uploaded_analyzed_at.isoformat() if self.uploaded_analyzed_at else ""
         payload["meta"]["uploaded_zone_required"] = self.uploaded_zone_required
         return payload
@@ -728,31 +852,90 @@ def _preview_placeholder(width: int, height: int) -> np.ndarray:
     return image
 
 
-def _read_first_frame(video_path: Path) -> Optional[np.ndarray]:
+def _frame_visual_score(frame: np.ndarray) -> float:
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    mean, std = cv2.meanStdDev(gray)
+    max_v = float(gray.max())
+    return float(mean[0][0]) + float(std[0][0]) * 2.0 + max_v * 0.5
+
+
+def _looks_like_black_frame(frame: np.ndarray) -> bool:
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    mean, std = cv2.meanStdDev(gray)
+    max_v = float(gray.max())
+    return float(mean[0][0]) < 10.0 and float(std[0][0]) < 6.0 and max_v < 40.0
+
+
+def _read_preview_frame(video_path: Path, max_probe_frames: int = 90) -> Optional[np.ndarray]:
     cap = cv2.VideoCapture(str(video_path))
-    ok, raw = cap.read()
+    best_frame: Optional[np.ndarray] = None
+    best_score = -1.0
+    probed = 0
+
+    while probed < max_probe_frames:
+        ok, raw = cap.read()
+        if not ok or raw is None or raw.size == 0:
+            break
+        probed += 1
+
+        score = _frame_visual_score(raw)
+        if score > best_score:
+            best_score = score
+            best_frame = raw.copy()
+
+        if not _looks_like_black_frame(raw):
+            cap.release()
+            return raw
+
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    if frame_count > 0:
+        for ratio in (0.15, 0.3, 0.5, 0.7):
+            frame_idx = min(frame_count - 1, int(frame_count * ratio))
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ok, raw = cap.read()
+            if not ok or raw is None or raw.size == 0:
+                continue
+            score = _frame_visual_score(raw)
+            if score > best_score:
+                best_score = score
+                best_frame = raw.copy()
+            if not _looks_like_black_frame(raw):
+                cap.release()
+                return raw
+
     cap.release()
-    if ok and raw is not None and raw.size > 0:
-        return raw
-    return None
+    return best_frame
+
+
+def _read_preview_image(image_path: Path) -> Optional[np.ndarray]:
+    frame = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if frame is None or frame.size == 0:
+        return None
+    return frame
 
 
 def _load_preview_frame(
     config: SystemConfig,
     max_width: int,
     preferred_video_path: Optional[Path] = None,
+    preferred_preview_path: Optional[Path] = None,
 ) -> tuple[np.ndarray, str]:
     source = config.video.source_path
     frame: Optional[np.ndarray] = None
     source_type = "placeholder"
 
-    if preferred_video_path and preferred_video_path.exists():
-        frame = _read_first_frame(preferred_video_path)
+    if preferred_preview_path and preferred_preview_path.exists():
+        frame = _read_preview_image(preferred_preview_path)
+        if frame is not None:
+            source_type = "uploaded_preview"
+
+    if frame is None and preferred_video_path and preferred_video_path.exists():
+        frame = _read_preview_frame(preferred_video_path)
         if frame is not None:
             source_type = "uploaded_video"
 
     if frame is None and source and Path(source).exists():
-        frame = _read_first_frame(Path(source))
+        frame = _read_preview_frame(Path(source))
         if frame is not None:
             source_type = "video"
 
@@ -767,7 +950,7 @@ def _load_preview_frame(
 
 
 def _image_to_base64_jpeg(frame: np.ndarray) -> str:
-    ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 92])
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to encode preview frame")
     return base64.b64encode(encoded.tobytes()).decode("ascii")
@@ -852,64 +1035,72 @@ def save_raw_config_api(payload: RawConfigPayload) -> Dict[str, Any]:
 @app.get("/api/demo/status")
 def demo_status() -> Dict[str, Any]:
     with dashboard_state.lock:
+        uploaded_videos = _list_uploaded_videos(dashboard_state.config, dashboard_state.uploaded_video_path)
         return {
             "run_mode": dashboard_state.config.app.run_mode,
             "demo_source": dashboard_state.config.app.demo_source,
             "uploaded_video_name": dashboard_state.uploaded_video_name,
+            "uploaded_video_key": dashboard_state.uploaded_video_path.name if dashboard_state.uploaded_video_path else "",
             "uploaded_video_path": str(dashboard_state.uploaded_video_path) if dashboard_state.uploaded_video_path else "",
+            "uploaded_preview_available": bool(dashboard_state.uploaded_preview_path and dashboard_state.uploaded_preview_path.exists()),
             "uploaded_analyzed_at": dashboard_state.uploaded_analyzed_at.isoformat() if dashboard_state.uploaded_analyzed_at else "",
             "zone_required": dashboard_state.uploaded_zone_required,
+            "uploaded_videos": uploaded_videos,
         }
 
 
-@app.post("/api/demo/upload")
-async def upload_demo_video(
+@app.post("/api/demo/upload-preview")
+async def upload_demo_preview(
     request: Request,
-    filename: str = Query(default="upload.mp4"),
+    token: str = Query(..., min_length=1, max_length=120),
 ) -> Dict[str, Any]:
     with dashboard_state.lock:
         cfg = dashboard_state.config
         if cfg.app.run_mode != "demo":
-            raise HTTPException(status_code=400, detail="Video upload is only available in demo mode")
+            raise HTTPException(status_code=400, detail="Preview upload is only available in demo mode")
 
-        allowed_ext = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".webm"}
-        safe_name = Path(filename).name
-        suffix = Path(safe_name).suffix.lower() if safe_name else ".mp4"
-        if suffix not in allowed_ext:
-            raise HTTPException(status_code=400, detail=f"Unsupported file extension: {suffix}")
+        safe_token = _normalize_preview_token(token)
+        if not safe_token:
+            raise HTTPException(status_code=400, detail="Invalid preview token")
 
         upload_dir = _resolve_upload_dir(cfg)
         upload_dir.mkdir(parents=True, exist_ok=True)
+        preview_dir = _resolve_preview_dir(upload_dir)
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        target = _preview_temp_path(upload_dir, safe_token)
 
-        if dashboard_state.uploaded_video_path and dashboard_state.uploaded_video_path.exists():
-            try:
-                dashboard_state.uploaded_video_path.unlink()
-            except OSError:
-                pass
-
-        target = upload_dir / f"demo_{datetime.now().strftime('%Y%m%d_%H%M%S')}{suffix}"
-
-        max_bytes = 350 * 1024 * 1024
+        max_bytes = 25 * 1024 * 1024
         total = 0
-        with target.open("wb") as f:
-            async for chunk in request.stream():
-                if not chunk:
-                    continue
-                total += len(chunk)
-                if total > max_bytes:
-                    raise HTTPException(status_code=400, detail="File too large, max 350MB")
-                f.write(chunk)
+        chunks: List[bytes] = []
+        async for chunk in request.stream():
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > max_bytes:
+                raise HTTPException(status_code=400, detail="Preview image too large, max 25MB")
+            chunks.append(chunk)
 
-        if total <= 0:
-            raise HTTPException(status_code=400, detail="Empty upload body")
+        payload = b"".join(chunks)
+        if not payload:
+            raise HTTPException(status_code=400, detail="Empty preview upload body")
 
-        dashboard_state.set_uploaded_video(target, safe_name or target.name)
+        image_np = np.frombuffer(payload, dtype=np.uint8)
+        frame = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
+        if frame is None or frame.size == 0:
+            raise HTTPException(status_code=400, detail="Invalid preview image")
+
+        ok = cv2.imwrite(str(target), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        if not ok:
+            raise HTTPException(status_code=500, detail="Failed to save preview image")
+
         LOGGER.info(
-            "Demo video uploaded",
+            "Demo preview uploaded",
             extra={
                 "context": {
+                    "token": safe_token,
                     "path": str(target),
-                    "filename": safe_name or target.name,
+                    "width": int(frame.shape[1]),
+                    "height": int(frame.shape[0]),
                     "size_bytes": total,
                 }
             },
@@ -917,11 +1108,128 @@ async def upload_demo_video(
 
         return {
             "status": "ok",
+            "preview_token": safe_token,
+            "width": int(frame.shape[1]),
+            "height": int(frame.shape[0]),
+            "size_bytes": total,
+            "uploaded_at": datetime.now().isoformat(),
+        }
+
+
+@app.post("/api/demo/upload")
+async def upload_demo_video(
+    request: Request,
+    filename: str = Query(default="upload.mp4"),
+    preview_token: str = Query(default="", max_length=120),
+) -> Dict[str, Any]:
+    with dashboard_state.lock:
+        cfg = dashboard_state.config
+        if cfg.app.run_mode != "demo":
+            raise HTTPException(status_code=400, detail="Video upload is only available in demo mode")
+
+        safe_name = Path(filename).name
+        suffix = Path(safe_name).suffix.lower() if safe_name else ".mp4"
+        if suffix not in ALLOWED_VIDEO_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"Unsupported file extension: {suffix}")
+
+        upload_dir = _resolve_upload_dir(cfg)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        raw_stem = Path(safe_name).stem if safe_name else "upload"
+        normalized_stem = "".join(ch if (ch.isalnum() or ch in {"-", "_"}) else "_" for ch in raw_stem).strip("_")
+        if not normalized_stem:
+            normalized_stem = "upload"
+        target = upload_dir / f"demo_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{normalized_stem[:40]}{suffix}"
+
+        max_bytes = 350 * 1024 * 1024
+        total = 0
+        try:
+            with target.open("wb") as f:
+                async for chunk in request.stream():
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise HTTPException(status_code=400, detail="File too large, max 350MB")
+                    f.write(chunk)
+
+            if total <= 0:
+                raise HTTPException(status_code=400, detail="Empty upload body")
+        except Exception:
+            try:
+                target.unlink()
+            except OSError:
+                pass
+            raise
+
+        preview_path = _bind_preview_to_video(cfg, target, preview_token)
+        dashboard_state.set_uploaded_video(target, safe_name or target.name, preview_path=preview_path)
+        LOGGER.info(
+            "Demo video uploaded",
+            extra={
+                "context": {
+                    "path": str(target),
+                    "filename": safe_name or target.name,
+                    "size_bytes": total,
+                    "preview_path": str(preview_path) if preview_path else "",
+                }
+            },
+        )
+
+        return {
+            "status": "ok",
             "uploaded_video_name": dashboard_state.uploaded_video_name,
+            "uploaded_video_key": target.name,
             "uploaded_video_path": str(target),
+            "uploaded_preview_available": bool(preview_path and preview_path.exists()),
             "size_bytes": total,
             "uploaded_at": datetime.now().isoformat(),
             "zone_required": dashboard_state.uploaded_zone_required,
+            "uploaded_videos": _list_uploaded_videos(cfg, dashboard_state.uploaded_video_path),
+        }
+
+
+@app.post("/api/demo/select-uploaded")
+def select_uploaded_video(video_key: str = Query(..., min_length=1, max_length=255)) -> Dict[str, Any]:
+    with dashboard_state.lock:
+        cfg = dashboard_state.config
+        if cfg.app.run_mode != "demo":
+            raise HTTPException(status_code=400, detail="Video selection is only available in demo mode")
+
+        safe_key = Path(video_key).name
+        if safe_key != video_key:
+            raise HTTPException(status_code=400, detail="Invalid video key")
+
+        upload_dir = _resolve_upload_dir(cfg)
+        target = upload_dir / safe_key
+        if not target.exists() or not target.is_file():
+            raise HTTPException(status_code=404, detail="Uploaded video not found")
+        suffix = target.suffix.lower()
+        if suffix not in ALLOWED_VIDEO_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"Unsupported file extension: {suffix}")
+
+        preview_path = _find_preview_for_video(cfg, target)
+        dashboard_state.set_uploaded_video(target, target.name, preview_path=preview_path)
+        LOGGER.info(
+            "Uploaded demo video selected",
+            extra={
+                "context": {
+                    "path": str(target),
+                    "filename": target.name,
+                    "preview_path": str(preview_path) if preview_path else "",
+                }
+            },
+        )
+
+        return {
+            "status": "ok",
+            "uploaded_video_name": dashboard_state.uploaded_video_name,
+            "uploaded_video_key": target.name,
+            "uploaded_video_path": str(target),
+            "uploaded_preview_available": bool(preview_path and preview_path.exists()),
+            "selected_at": datetime.now().isoformat(),
+            "zone_required": dashboard_state.uploaded_zone_required,
+            "uploaded_videos": _list_uploaded_videos(cfg, dashboard_state.uploaded_video_path),
         }
 
 
@@ -954,21 +1262,25 @@ def analyze_uploaded_video(max_frames: int = Query(default=0, ge=0, le=30000)) -
 
 @app.get("/api/init/frame")
 def get_init_frame(
-    max_width: int = Query(default=900, ge=240, le=1920),
+    max_width: int = Query(default=0, ge=0, le=3840),
     source: str = Query(default="auto", pattern="^(auto|uploaded|config)$"),
 ) -> Dict[str, Any]:
     with dashboard_state.lock:
         cfg = dashboard_state.config
         preferred_video_path: Optional[Path] = None
+        preferred_preview_path: Optional[Path] = None
         if source == "uploaded":
             preferred_video_path = dashboard_state.uploaded_video_path
+            preferred_preview_path = dashboard_state.uploaded_preview_path
         elif source == "auto" and cfg.app.run_mode == "demo" and cfg.app.demo_source == "uploaded_video":
             preferred_video_path = dashboard_state.uploaded_video_path
+            preferred_preview_path = dashboard_state.uploaded_preview_path
 
         frame, source_type = _load_preview_frame(
             cfg,
             max_width=max_width,
             preferred_video_path=preferred_video_path,
+            preferred_preview_path=preferred_preview_path,
         )
         return {
             "source": source_type,
@@ -1001,6 +1313,9 @@ def save_init_zones(payload: InitZonesPayload) -> Dict[str, Any]:
         spatial = dict(updated.get("spatial", {}))
         spatial["fence_polygon"] = _to_int_polygon(payload.fence_polygon, "fence_polygon")
         spatial["wheel_mask_polygon"] = _to_int_polygon(payload.wheel_mask_polygon, "wheel_mask_polygon")
+        if payload.frame_width is not None and payload.frame_height is not None:
+            spatial["frame_width"] = int(payload.frame_width)
+            spatial["frame_height"] = int(payload.frame_height)
 
         zones: Dict[str, List[List[int]]] = {}
         for name, points in payload.zones.items():

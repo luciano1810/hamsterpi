@@ -378,7 +378,7 @@ th {
 
 .init-layout {
   display: grid;
-  grid-template-columns: 1.5fr 1fr;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
   gap: 10px;
 }
 
@@ -387,13 +387,21 @@ th {
   border-radius: 12px;
   padding: 8px;
   background: rgba(4, 16, 24, 0.72);
+  min-width: 0;
+  max-height: 72vh;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  overflow: hidden;
 }
 
 #init-canvas {
   display: block;
-  width: 100%;
+  width: auto;
+  max-width: none;
   height: auto;
-  max-height: 72vh;
+  max-height: none;
+  margin: 0;
   border-radius: 8px;
   cursor: crosshair;
   background: #0c1823;
@@ -531,6 +539,10 @@ th {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.settings-btns-single {
+  grid-template-columns: 1fr;
 }
 
 .settings-upload {
@@ -688,10 +700,6 @@ th {
 
   .init-layout {
     grid-template-columns: 1fr;
-  }
-
-  #init-canvas {
-    max-height: 45vh;
   }
 
   .settings-grid {

@@ -35,14 +35,24 @@ class SpatialAnalyzer:
         zones: Dict[str, Polygon],
         fence_polygon: Polygon,
         wheel_mask_polygon: Polygon,
+        motion_fence_polygon: Optional[Polygon] = None,
+        bev_homography: Optional[np.ndarray] = None,
         meters_per_pixel: float = 0.0012,
         max_trajectory_points: int = 4000,
     ) -> None:
         self.frame_width = frame_width
         self.frame_height = frame_height
-        self.zones = zones
+        self.zones = {
+            zone_name: np.array(polygon, dtype=np.int32)
+            for zone_name, polygon in zones.items()
+            if len(polygon) >= 3
+        }
         self.fence_polygon = np.array(fence_polygon, dtype=np.int32)
+        motion_fence = motion_fence_polygon if motion_fence_polygon is not None else fence_polygon
+        self.motion_fence_polygon = np.array(motion_fence, dtype=np.int32)
         self.wheel_mask_polygon = np.array(wheel_mask_polygon, dtype=np.int32)
+        self.bev_homography = np.array(bev_homography, dtype=np.float32) if bev_homography is not None else None
+        self.uses_bev = self.bev_homography is not None
         self.meters_per_pixel = meters_per_pixel
 
         self._bg = cv2.createBackgroundSubtractorMOG2(history=600, varThreshold=32, detectShadows=False)
@@ -52,6 +62,13 @@ class SpatialAnalyzer:
         self._zone_dwell_seconds = {zone: 0.0 for zone in zones}
         self._escape_count = 0
         self._trajectory: Deque[dict] = deque(maxlen=max_trajectory_points)
+        self._centroid_heat_radius = max(2, int(round(min(frame_width, frame_height) * 0.012)))
+
+        self._motion_fence_mask = np.zeros((frame_height, frame_width), dtype=np.uint8)
+        if len(self.motion_fence_polygon) >= 3:
+            cv2.fillPoly(self._motion_fence_mask, [self.motion_fence_polygon], 255)
+        else:
+            self._motion_fence_mask[:, :] = 255
 
     @staticmethod
     def _largest_contour(mask: np.ndarray) -> Optional[np.ndarray]:
@@ -72,29 +89,47 @@ class SpatialAnalyzer:
 
     @staticmethod
     def _in_polygon(point: Point, polygon: np.ndarray) -> bool:
+        if polygon is None or len(polygon) < 3:
+            return False
         return cv2.pointPolygonTest(polygon, point, False) >= 0
 
     def _zone_for_point(self, point: Point) -> Optional[str]:
         for zone_name, polygon in self.zones.items():
-            if self._in_polygon(point, np.array(polygon, dtype=np.int32)):
+            if self._in_polygon(point, polygon):
                 return zone_name
         return None
+
+    def _project_point_to_bev(self, point: Point) -> Optional[Point]:
+        if self.bev_homography is None:
+            return point
+        src = np.array([[[float(point[0]), float(point[1])]]], dtype=np.float32)
+        projected = cv2.perspectiveTransform(src, self.bev_homography)
+        x_f, y_f = float(projected[0, 0, 0]), float(projected[0, 0, 1])
+        if not np.isfinite(x_f) or not np.isfinite(y_f):
+            return None
+        x = int(round(x_f))
+        y = int(round(y_f))
+        if x < 0 or y < 0 or x >= self.frame_width or y >= self.frame_height:
+            return None
+        return (x, y)
 
     def _motion_mask(self, frame: np.ndarray) -> np.ndarray:
         fg = self._bg.apply(frame)
         fg = cv2.medianBlur(fg, 5)
         _, fg = cv2.threshold(fg, 190, 255, cv2.THRESH_BINARY)
         fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8), iterations=1)
-        cv2.fillPoly(fg, [self.wheel_mask_polygon], 0)
+        fg = cv2.bitwise_and(fg, self._motion_fence_mask)
+        if len(self.wheel_mask_polygon) >= 3:
+            cv2.fillPoly(fg, [self.wheel_mask_polygon], 0)
         return fg
 
     def update(self, frame: np.ndarray, timestamp: datetime, dt_seconds: float) -> SpatialMetrics:
         motion = self._motion_mask(frame)
-        self._heatmap += motion / 255.0
         active_pixels = int(np.count_nonzero(motion))
 
         contour = self._largest_contour(motion)
-        centroid = self._contour_centroid(contour) if contour is not None else None
+        centroid_camera = self._contour_centroid(contour) if contour is not None else None
+        centroid = self._project_point_to_bev(centroid_camera) if centroid_camera is not None else None
 
         zone_name: Optional[str] = None
         escape_detected = False
@@ -110,6 +145,8 @@ class SpatialAnalyzer:
             escape_detected = not self._in_polygon(centroid, self.fence_polygon)
             if escape_detected:
                 self._escape_count += 1
+
+            cv2.circle(self._heatmap, centroid, self._centroid_heat_radius, 1.0, thickness=-1)
 
             self._trajectory.append(
                 {

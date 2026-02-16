@@ -260,6 +260,13 @@
             <div id="settings-config-form" class="settings-form"></div>
 
             <div id="settings-upload-block" class="settings-upload hidden">
+              <label for="settings-uploaded-select" class="settings-label" data-i18n="settings_uploaded_select_label">选择已上传视频</label>
+              <select id="settings-uploaded-select" class="settings-select">
+                <option value="" data-i18n="upload_history_none">暂无可选视频</option>
+              </select>
+              <div class="settings-btns settings-btns-single">
+                <button id="settings-use-uploaded" class="btn btn-ghost btn-xs" data-i18n="btn_use_uploaded_video">使用并初始化圈区</button>
+              </div>
               <label for="settings-video-file" class="settings-label" data-i18n="settings_upload_label">上传视频文件</label>
               <input id="settings-video-file" type="file" class="settings-file" accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/m4v,video/webm" />
               <div class="settings-btns">
@@ -274,6 +281,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-    <script src="/web/app.js" type="module"></script>
+    <script src="/web/app.js?v=20260217f" type="module"></script>
   </body>
 </html>
