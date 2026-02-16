@@ -133,12 +133,19 @@ const I18N = {
     settings_status_load_fail: "加载失败：{error}",
     upload_status_none: "尚未上传视频。",
     upload_status_uploaded: "已上传：{name}",
+    upload_status_uploaded_need_init: "已上传：{name}（待圈区）",
     upload_status_uploading: "正在上传视频...",
+    upload_status_compressing: "正在本地压缩视频...",
+    upload_status_compress_done: "压缩完成：{orig_mb}MB -> {new_mb}MB（{ratio}%）",
+    upload_status_compress_fail: "视频压缩失败：{error}",
+    upload_status_fallback_original: "压缩失败，改为原视频上传...",
     upload_status_upload_ok: "上传成功：{name}",
+    upload_status_upload_ok_need_init: "上传成功：{name}。请先初始化圈区，再点击分析。",
     upload_status_upload_fail: "上传失败：{error}",
     upload_status_analyzing: "正在分析视频...",
     upload_status_analyze_ok: "视频分析完成。",
     upload_status_analyze_fail: "视频分析失败：{error}",
+    upload_status_zone_required: "请先完成上传视频圈区初始化，再进行分析。",
     mode_real_reserved: "真实模式已预留，当前暂未接入真实摄像头。",
     status_upload_then_analyze: "请选择上传视频并点击分析。",
     status_no_frames: "视频中未检测到可分析帧。",
@@ -213,6 +220,7 @@ const I18N = {
     point_label: "点",
     done_mark: "完成",
     source_video: "视频首帧",
+    source_uploaded_frame: "上传视频首帧",
     source_placeholder: "占位图",
     source_unknown: "未知",
     alert_type_escape: "越界",
@@ -329,12 +337,19 @@ const I18N = {
     settings_status_load_fail: "Load failed: {error}",
     upload_status_none: "No video uploaded.",
     upload_status_uploaded: "Uploaded: {name}",
+    upload_status_uploaded_need_init: "Uploaded: {name} (zones required)",
     upload_status_uploading: "Uploading video...",
+    upload_status_compressing: "Compressing video locally...",
+    upload_status_compress_done: "Compression done: {orig_mb}MB -> {new_mb}MB ({ratio}%)",
+    upload_status_compress_fail: "Video compression failed: {error}",
+    upload_status_fallback_original: "Compression failed, fallback to original upload...",
     upload_status_upload_ok: "Upload successful: {name}",
+    upload_status_upload_ok_need_init: "Upload successful: {name}. Initialize zones before analysis.",
     upload_status_upload_fail: "Upload failed: {error}",
     upload_status_analyzing: "Analyzing video...",
     upload_status_analyze_ok: "Video analysis completed.",
     upload_status_analyze_fail: "Video analysis failed: {error}",
+    upload_status_zone_required: "Initialize zones for uploaded video before analysis.",
     mode_real_reserved: "Real mode is reserved and camera control is not connected yet.",
     status_upload_then_analyze: "Upload a video and click Analyze.",
     status_no_frames: "No analyzable frames found in video.",
@@ -409,6 +424,7 @@ const I18N = {
     point_label: "point",
     done_mark: "done",
     source_video: "video frame",
+    source_uploaded_frame: "uploaded video frame",
     source_placeholder: "placeholder",
     source_unknown: "unknown",
     alert_type_escape: "Escape",
@@ -439,6 +455,14 @@ let lastDashboardData = null;
 let currentRunMode = "demo";
 let currentDemoSource = "virtual";
 let uploadedVideoName = "";
+let uploadedZoneRequired = false;
+const CLIENT_VIDEO_COMPRESS = {
+  maxWidth: 960,
+  maxHeight: 540,
+  targetFps: 12,
+  videoBitsPerSecond: 900000,
+  chunkMs: 500,
+};
 
 const initState = {
   activeIndex: 0,
@@ -524,9 +548,14 @@ function updateUploadBlockVisibility() {
     return;
   }
 
-  status.textContent = uploadedVideoName
-    ? formatText("upload_status_uploaded", { name: uploadedVideoName })
-    : t("upload_status_none");
+  if (!uploadedVideoName) {
+    status.textContent = t("upload_status_none");
+    return;
+  }
+
+  status.textContent = uploadedZoneRequired
+    ? formatText("upload_status_uploaded_need_init", { name: uploadedVideoName })
+    : formatText("upload_status_uploaded", { name: uploadedVideoName });
 }
 
 function fmtNumber(value, digits = 2) {
@@ -1056,6 +1085,9 @@ function renderGeneratedAt(data) {
   currentRunMode = data.meta?.run_mode || currentRunMode;
   currentDemoSource = data.meta?.demo_source || currentDemoSource;
   uploadedVideoName = data.meta?.uploaded_video_name || uploadedVideoName;
+  if (typeof data.meta?.uploaded_zone_required === "boolean") {
+    uploadedZoneRequired = data.meta.uploaded_zone_required;
+  }
   updateModeSelectorsLabel();
   updateUploadBlockVisibility();
 }
@@ -1173,6 +1205,9 @@ function closeModal(id) {
 }
 
 function sourceLabel(source) {
+  if (source === "uploaded_video") {
+    return t("source_uploaded_frame");
+  }
   if (source === "video") {
     return t("source_video");
   }
@@ -1182,13 +1217,24 @@ function sourceLabel(source) {
   return t("source_unknown");
 }
 
-async function loadInitFrame() {
+function preferredInitFrameSource() {
+  if (currentRunMode === "demo" && currentDemoSource === "uploaded_video") {
+    return "uploaded";
+  }
+  return "auto";
+}
+
+async function loadInitFrame(source = "auto") {
   document.getElementById("init-status").textContent = t("init_status_loading");
-  const response = await fetch("/api/init/frame", { cache: "no-store" });
+  const query = new URLSearchParams({ source });
+  const response = await fetch(`/api/init/frame?${query.toString()}`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`init frame request failed: ${response.status}`);
   }
   const payload = await response.json();
+  if (typeof payload.zone_required === "boolean") {
+    uploadedZoneRequired = payload.zone_required;
+  }
 
   const image = new Image();
   image.src = `data:image/jpeg;base64,${payload.image_b64}`;
@@ -1318,8 +1364,13 @@ async function saveInitZones() {
     return;
   }
 
+  const saved = await response.json();
+  if (typeof saved.uploaded_zone_required === "boolean") {
+    uploadedZoneRequired = saved.uploaded_zone_required;
+  }
   statusNode.textContent = t("init_status_saved");
   await loadConfig();
+  await loadDemoStatus();
   await loadDashboard(true);
 }
 
@@ -1363,6 +1414,7 @@ async function loadDemoStatus() {
     currentRunMode = status.run_mode || currentRunMode;
     currentDemoSource = status.demo_source || currentDemoSource;
     uploadedVideoName = status.uploaded_video_name || "";
+    uploadedZoneRequired = Boolean(status.zone_required);
     updateModeSelectorsLabel();
     updateUploadBlockVisibility();
   } catch (_err) {
@@ -1370,34 +1422,251 @@ async function loadDemoStatus() {
   }
 }
 
+async function responseDetailText(response) {
+  const text = await response.text();
+  try {
+    const payload = JSON.parse(text);
+    if (payload && typeof payload.detail === "string") {
+      return payload.detail;
+    }
+  } catch (_err) {
+    // fall through
+  }
+  return text;
+}
+
+function formatMb(bytes) {
+  return (Number(bytes || 0) / (1024 * 1024)).toFixed(2);
+}
+
+function pickRecorderMimeType() {
+  if (typeof MediaRecorder === "undefined") {
+    return "";
+  }
+  const candidates = [
+    "video/webm;codecs=vp9",
+    "video/webm;codecs=vp8",
+    "video/webm",
+    "video/mp4",
+  ];
+  for (const mime of candidates) {
+    if (MediaRecorder.isTypeSupported(mime)) {
+      return mime;
+    }
+  }
+  return "";
+}
+
+function extensionFromMimeType(mimeType) {
+  if (mimeType.includes("mp4")) {
+    return "mp4";
+  }
+  return "webm";
+}
+
+async function compressVideoForUpload(file) {
+  if (typeof MediaRecorder === "undefined") {
+    throw new Error("MediaRecorder not supported");
+  }
+  if (typeof HTMLCanvasElement === "undefined" || !HTMLCanvasElement.prototype.captureStream) {
+    throw new Error("Canvas capture not supported");
+  }
+
+  const mimeType = pickRecorderMimeType();
+  if (!mimeType) {
+    throw new Error("No supported recorder codec");
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  const video = document.createElement("video");
+  video.preload = "metadata";
+  video.src = objectUrl;
+  video.muted = true;
+  video.playsInline = true;
+  video.crossOrigin = "anonymous";
+
+  let stream = null;
+  let drawTimer = null;
+  try {
+    await new Promise((resolve, reject) => {
+      video.onloadedmetadata = () => resolve();
+      video.onerror = () => reject(new Error("video metadata load failed"));
+    });
+
+    if (!video.videoWidth || !video.videoHeight) {
+      throw new Error("invalid video size");
+    }
+
+    const scale = Math.min(
+      1,
+      CLIENT_VIDEO_COMPRESS.maxWidth / video.videoWidth,
+      CLIENT_VIDEO_COMPRESS.maxHeight / video.videoHeight
+    );
+    const width = Math.max(2, Math.floor((video.videoWidth * scale) / 2) * 2);
+    const height = Math.max(2, Math.floor((video.videoHeight * scale) / 2) * 2);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("canvas context unavailable");
+    }
+
+    stream = canvas.captureStream(CLIENT_VIDEO_COMPRESS.targetFps);
+    const chunks = [];
+
+    const recorder = new MediaRecorder(stream, {
+      mimeType,
+      videoBitsPerSecond: CLIENT_VIDEO_COMPRESS.videoBitsPerSecond,
+    });
+
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        chunks.push(event.data);
+      }
+    };
+
+    const recorderDone = new Promise((resolve, reject) => {
+      recorder.onstop = () => resolve();
+      recorder.onerror = () => reject(new Error("video recorder failed"));
+    });
+
+    const drawFrame = () => {
+      ctx.drawImage(video, 0, 0, width, height);
+    };
+
+    drawFrame();
+    recorder.start(CLIENT_VIDEO_COMPRESS.chunkMs);
+
+    await video.play();
+    const frameIntervalMs = Math.max(16, Math.floor(1000 / CLIENT_VIDEO_COMPRESS.targetFps));
+    drawTimer = window.setInterval(() => {
+      if (!video.paused && !video.ended) {
+        drawFrame();
+      }
+    }, frameIntervalMs);
+
+    await new Promise((resolve, reject) => {
+      video.onended = () => resolve();
+      video.onerror = () => reject(new Error("video playback failed"));
+    });
+
+    if (drawTimer) {
+      clearInterval(drawTimer);
+      drawTimer = null;
+    }
+
+    if (recorder.state !== "inactive") {
+      recorder.stop();
+    }
+    await recorderDone;
+
+    const compressedBlob = new Blob(chunks, { type: mimeType });
+    if (!compressedBlob.size) {
+      throw new Error("compressed file is empty");
+    }
+
+    const baseName = file.name.replace(/\.[^.]+$/, "");
+    const ext = extensionFromMimeType(mimeType);
+    const outputName = `${baseName}_compressed.${ext}`;
+    const outputFile = new File([compressedBlob], outputName, {
+      type: mimeType,
+      lastModified: Date.now(),
+    });
+
+    return {
+      file: outputFile,
+      mimeType,
+      width,
+      height,
+      originalSize: file.size,
+      compressedSize: outputFile.size,
+    };
+  } finally {
+    if (drawTimer) {
+      clearInterval(drawTimer);
+    }
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+    }
+    video.pause();
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 async function uploadDemoVideo() {
   const input = document.getElementById("settings-video-file");
   const status = document.getElementById("settings-upload-status");
+  const uploadBtn = document.getElementById("settings-upload");
+  const analyzeBtn = document.getElementById("settings-analyze");
+
+  if (currentRunMode !== "demo") {
+    status.textContent = t("mode_real_reserved");
+    return;
+  }
+  if (currentDemoSource !== "uploaded_video") {
+    status.textContent = t("status_upload_then_analyze");
+    return;
+  }
+
   const file = input.files?.[0];
   if (!file) {
     status.textContent = t("status_upload_then_analyze");
     return;
   }
 
-  status.textContent = t("upload_status_uploading");
-  const form = new FormData();
-  form.append("file", file);
+  uploadBtn.disabled = true;
+  analyzeBtn.disabled = true;
+  try {
+    status.textContent = t("upload_status_compressing");
 
-  const response = await fetch("/api/demo/upload", {
-    method: "POST",
-    body: form,
-  });
+    let fileToUpload = file;
+    let uploadName = file.name || "upload.mp4";
+    try {
+      const compressed = await compressVideoForUpload(file);
+      fileToUpload = compressed.file;
+      uploadName = compressed.file.name || uploadName;
 
-  if (!response.ok) {
-    const text = await response.text();
-    status.textContent = formatText("upload_status_upload_fail", { error: text });
-    return;
+      const ratio = compressed.originalSize > 0
+        ? ((compressed.compressedSize / compressed.originalSize) * 100).toFixed(1)
+        : "0.0";
+
+      status.textContent = `${formatText("upload_status_compress_done", {
+        orig_mb: formatMb(compressed.originalSize),
+        new_mb: formatMb(compressed.compressedSize),
+        ratio,
+      })} ${t("upload_status_uploading")}`;
+    } catch (err) {
+      status.textContent = `${formatText("upload_status_compress_fail", { error: String(err) })} ${t("upload_status_fallback_original")} ${t("upload_status_uploading")}`;
+    }
+
+    const endpoint = `/api/demo/upload?filename=${encodeURIComponent(uploadName)}`;
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": fileToUpload.type || "application/octet-stream",
+      },
+      body: fileToUpload,
+    });
+
+    if (!response.ok) {
+      const text = await responseDetailText(response);
+      status.textContent = formatText("upload_status_upload_fail", { error: text });
+      return;
+    }
+
+    const payload = await response.json();
+    uploadedVideoName = payload.uploaded_video_name || uploadName;
+    uploadedZoneRequired = Boolean(payload.zone_required ?? true);
+    status.textContent = uploadedZoneRequired
+      ? formatText("upload_status_upload_ok_need_init", { name: uploadedVideoName })
+      : formatText("upload_status_upload_ok", { name: uploadedVideoName });
+    await loadDemoStatus();
+  } finally {
+    uploadBtn.disabled = false;
+    analyzeBtn.disabled = false;
   }
-
-  const payload = await response.json();
-  uploadedVideoName = payload.uploaded_video_name || file.name;
-  status.textContent = formatText("upload_status_upload_ok", { name: uploadedVideoName });
-  await loadDemoStatus();
 }
 
 async function analyzeDemoVideo() {
@@ -1410,11 +1679,31 @@ async function analyzeDemoVideo() {
     status.textContent = t("status_upload_then_analyze");
     return;
   }
+  if (uploadedZoneRequired) {
+    status.textContent = t("upload_status_zone_required");
+    openModal("init-modal");
+    try {
+      await loadInitFrame("uploaded");
+    } catch (err) {
+      document.getElementById("init-status").textContent = String(err);
+    }
+    return;
+  }
   status.textContent = t("upload_status_analyzing");
 
   const response = await fetch("/api/demo/analyze-upload", { method: "POST" });
   if (!response.ok) {
-    const text = await response.text();
+    const text = await responseDetailText(response);
+    if (String(text).includes("zone initialization required")) {
+      status.textContent = t("upload_status_zone_required");
+      openModal("init-modal");
+      try {
+        await loadInitFrame("uploaded");
+      } catch (err) {
+        document.getElementById("init-status").textContent = String(err);
+      }
+      return;
+    }
     status.textContent = formatText("upload_status_analyze_fail", { error: text });
     return;
   }
@@ -1519,7 +1808,7 @@ function bindEvents() {
   initBtn.addEventListener("click", async () => {
     openModal("init-modal");
     try {
-      await loadInitFrame();
+      await loadInitFrame(preferredInitFrameSource());
     } catch (err) {
       document.getElementById("init-status").textContent = String(err);
     }
@@ -1578,9 +1867,12 @@ function startAutoRefresh() {
     if (!autoRefresh) {
       return;
     }
+    if (currentRunMode !== "demo" || currentDemoSource !== "virtual") {
+      return;
+    }
 
     try {
-      await loadDashboard(shouldForceDashboardRefresh());
+      await loadDashboard(true);
     } catch (err) {
       console.error(err);
     }

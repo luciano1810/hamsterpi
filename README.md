@@ -69,7 +69,12 @@ Open `http://<pi-ip>:8000`.
 In UI settings, you can switch mode directly:
 
 1. Select `Demo` + `Virtual Data` for synthetic dashboard.
-2. Select `Demo` + `Uploaded Video Analysis`, upload video, then click analyze.
+2. Select `Demo` + `Uploaded Video Analysis`, then:
+   - browser compresses video locally first
+   - if browser codec/path is unsupported, fallback uploads original file
+   - uploads compressed video to backend
+   - after each new upload, initialize zones on uploaded video frame first
+   - click analyze to generate dashboard
 3. Select `Real` to enter reserved mode (camera integration placeholder).
 
 ## First-Time Initialization (圈区)
@@ -86,8 +91,13 @@ In UI settings, you can switch mode directly:
 
 APIs used:
 
-- `GET /api/init/frame` preview frame + existing regions
+- `GET /api/init/frame?source=auto|uploaded|config` preview frame + existing regions
 - `POST /api/init/zones` persist user-defined regions and hot-reload config
+
+Note for uploaded-video demo mode:
+
+- `POST /api/demo/upload` marks uploaded video as `zone_required=true`
+- analysis is blocked until zones are saved once via `POST /api/init/zones`
 
 ## Motion Trigger
 

@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -483,6 +483,12 @@ class DashboardState:
         self.uploaded_video_name: str = ""
         self.uploaded_payload: Optional[Dict[str, Any]] = None
         self.uploaded_analyzed_at: Optional[datetime] = None
+        self.uploaded_zone_required: bool = False
+        self.uploaded_zone_token: str = ""
+
+    def activate_uploaded_demo_source(self) -> None:
+        self.config.app.run_mode = "demo"
+        self.config.app.demo_source = "uploaded_video"
 
     def should_refresh_virtual(self) -> bool:
         max_age = timedelta(seconds=self.config.frontend.refresh_interval_seconds)
@@ -494,12 +500,23 @@ class DashboardState:
         return self.payload
 
     def set_uploaded_video(self, path: Path, display_name: str) -> None:
+        self.activate_uploaded_demo_source()
         self.uploaded_video_path = path
         self.uploaded_video_name = display_name
         self.uploaded_payload = None
         self.uploaded_analyzed_at = None
+        self.uploaded_zone_required = True
+        self.uploaded_zone_token = str(path.resolve())
+
+    def mark_uploaded_video_zones_initialized(self) -> None:
+        if self.uploaded_video_path is None:
+            return
+        self.activate_uploaded_demo_source()
+        self.uploaded_zone_required = False
+        self.uploaded_zone_token = str(self.uploaded_video_path.resolve())
 
     def analyze_uploaded_video(self, max_frames: Optional[int] = None) -> Dict[str, Any]:
+        self.activate_uploaded_demo_source()
         if self.uploaded_video_path is None or not self.uploaded_video_path.exists():
             payload = _empty_dashboard_payload(
                 self.config,
@@ -508,6 +525,9 @@ class DashboardState:
             )
             self.payload = payload
             return payload
+
+        if self.uploaded_zone_required:
+            raise RuntimeError("zone initialization required for uploaded video")
 
         limit = max_frames
         if limit is None:
@@ -541,6 +561,9 @@ class DashboardState:
             )
             payload["meta"]["run_mode"] = "real"
             payload["meta"]["demo_source"] = demo_source
+            payload["meta"]["uploaded_video_name"] = self.uploaded_video_name
+            payload["meta"]["uploaded_analyzed_at"] = self.uploaded_analyzed_at.isoformat() if self.uploaded_analyzed_at else ""
+            payload["meta"]["uploaded_zone_required"] = self.uploaded_zone_required
             self.payload = payload
             return payload
 
@@ -559,6 +582,7 @@ class DashboardState:
             payload["meta"]["demo_source"] = demo_source
             payload["meta"]["uploaded_video_name"] = self.uploaded_video_name
             payload["meta"]["uploaded_analyzed_at"] = self.uploaded_analyzed_at.isoformat() if self.uploaded_analyzed_at else ""
+            payload["meta"]["uploaded_zone_required"] = self.uploaded_zone_required
             return payload
 
         if refresh or self.should_refresh_virtual():
@@ -568,6 +592,9 @@ class DashboardState:
 
         payload["meta"]["run_mode"] = run_mode
         payload["meta"]["demo_source"] = demo_source
+        payload["meta"]["uploaded_video_name"] = self.uploaded_video_name
+        payload["meta"]["uploaded_analyzed_at"] = self.uploaded_analyzed_at.isoformat() if self.uploaded_analyzed_at else ""
+        payload["meta"]["uploaded_zone_required"] = self.uploaded_zone_required
         return payload
 
 
@@ -609,17 +636,32 @@ def _preview_placeholder(width: int, height: int) -> np.ndarray:
     return image
 
 
-def _load_preview_frame(config: SystemConfig, max_width: int) -> tuple[np.ndarray, str]:
+def _read_first_frame(video_path: Path) -> Optional[np.ndarray]:
+    cap = cv2.VideoCapture(str(video_path))
+    ok, raw = cap.read()
+    cap.release()
+    if ok and raw is not None and raw.size > 0:
+        return raw
+    return None
+
+
+def _load_preview_frame(
+    config: SystemConfig,
+    max_width: int,
+    preferred_video_path: Optional[Path] = None,
+) -> tuple[np.ndarray, str]:
     source = config.video.source_path
     frame: Optional[np.ndarray] = None
     source_type = "placeholder"
 
-    if source and Path(source).exists():
-        cap = cv2.VideoCapture(str(source))
-        ok, raw = cap.read()
-        cap.release()
-        if ok and raw is not None and raw.size > 0:
-            frame = raw
+    if preferred_video_path and preferred_video_path.exists():
+        frame = _read_first_frame(preferred_video_path)
+        if frame is not None:
+            source_type = "uploaded_video"
+
+    if frame is None and source and Path(source).exists():
+        frame = _read_first_frame(Path(source))
+        if frame is not None:
             source_type = "video"
 
     if frame is None:
@@ -719,18 +761,23 @@ def demo_status() -> Dict[str, Any]:
             "uploaded_video_name": dashboard_state.uploaded_video_name,
             "uploaded_video_path": str(dashboard_state.uploaded_video_path) if dashboard_state.uploaded_video_path else "",
             "uploaded_analyzed_at": dashboard_state.uploaded_analyzed_at.isoformat() if dashboard_state.uploaded_analyzed_at else "",
+            "zone_required": dashboard_state.uploaded_zone_required,
         }
 
 
 @app.post("/api/demo/upload")
-async def upload_demo_video(file: UploadFile = File(...)) -> Dict[str, Any]:
+async def upload_demo_video(
+    request: Request,
+    filename: str = Query(default="upload.mp4"),
+) -> Dict[str, Any]:
     with dashboard_state.lock:
         cfg = dashboard_state.config
         if cfg.app.run_mode != "demo":
             raise HTTPException(status_code=400, detail="Video upload is only available in demo mode")
 
-        allowed_ext = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
-        suffix = Path(file.filename or "upload.mp4").suffix.lower()
+        allowed_ext = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".webm"}
+        safe_name = Path(filename).name
+        suffix = Path(safe_name).suffix.lower() if safe_name else ".mp4"
         if suffix not in allowed_ext:
             raise HTTPException(status_code=400, detail=f"Unsupported file extension: {suffix}")
 
@@ -747,20 +794,19 @@ async def upload_demo_video(file: UploadFile = File(...)) -> Dict[str, Any]:
 
         max_bytes = 350 * 1024 * 1024
         total = 0
-        try:
-            with target.open("wb") as f:
-                while True:
-                    chunk = await file.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    total += len(chunk)
-                    if total > max_bytes:
-                        raise HTTPException(status_code=400, detail="File too large, max 350MB")
-                    f.write(chunk)
-        finally:
-            await file.close()
+        with target.open("wb") as f:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(status_code=400, detail="File too large, max 350MB")
+                f.write(chunk)
 
-        dashboard_state.set_uploaded_video(target, file.filename or target.name)
+        if total <= 0:
+            raise HTTPException(status_code=400, detail="Empty upload body")
+
+        dashboard_state.set_uploaded_video(target, safe_name or target.name)
 
         return {
             "status": "ok",
@@ -768,6 +814,7 @@ async def upload_demo_video(file: UploadFile = File(...)) -> Dict[str, Any]:
             "uploaded_video_path": str(target),
             "size_bytes": total,
             "uploaded_at": datetime.now().isoformat(),
+            "zone_required": dashboard_state.uploaded_zone_required,
         }
 
 
@@ -795,12 +842,27 @@ def analyze_uploaded_video(max_frames: int = Query(default=0, ge=0, le=30000)) -
 
 
 @app.get("/api/init/frame")
-def get_init_frame(max_width: int = Query(default=900, ge=240, le=1920)) -> Dict[str, Any]:
+def get_init_frame(
+    max_width: int = Query(default=900, ge=240, le=1920),
+    source: str = Query(default="auto", pattern="^(auto|uploaded|config)$"),
+) -> Dict[str, Any]:
     with dashboard_state.lock:
         cfg = dashboard_state.config
-        frame, source_type = _load_preview_frame(cfg, max_width=max_width)
+        preferred_video_path: Optional[Path] = None
+        if source == "uploaded":
+            preferred_video_path = dashboard_state.uploaded_video_path
+        elif source == "auto" and cfg.app.run_mode == "demo" and cfg.app.demo_source == "uploaded_video":
+            preferred_video_path = dashboard_state.uploaded_video_path
+
+        frame, source_type = _load_preview_frame(
+            cfg,
+            max_width=max_width,
+            preferred_video_path=preferred_video_path,
+        )
         return {
             "source": source_type,
+            "requested_source": source,
+            "zone_required": dashboard_state.uploaded_zone_required,
             "width": int(frame.shape[1]),
             "height": int(frame.shape[0]),
             "image_b64": _image_to_base64_jpeg(frame),
@@ -860,11 +922,13 @@ def save_init_zones(payload: InitZonesPayload) -> Dict[str, Any]:
 
         save_raw_config(updated, default_config_path())
         dashboard_state.reload_from_disk()
+        dashboard_state.mark_uploaded_video_zones_initialized()
 
         return {
             "status": "ok",
             "saved_at": datetime.now().isoformat(),
             "config": _public_config(dashboard_state.config),
+            "uploaded_zone_required": dashboard_state.uploaded_zone_required,
         }
 
 
