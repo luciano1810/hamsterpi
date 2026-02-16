@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HamsterPi 监控台</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Sora:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/web/styles.css" />
+  </head>
+  <body>
+    <div class="bg-orb orb-a"></div>
+    <div class="bg-orb orb-b"></div>
+    <div class="bg-grid"></div>
+
+    <main class="page">
+      <header class="hero">
+        <div>
+          <p class="eyebrow" data-i18n="hero_eyebrow">仓鼠行为智能分析</p>
+          <h1 data-i18n="hero_title">HamsterPi 监控台</h1>
+          <p class="sub" data-i18n="hero_sub">
+            面向 Pi Zero 2W 的低内存方案，支持虚拟数据、初始化圈区、运动触发拍摄、行为与环境分析。
+          </p>
+        </div>
+        <div class="hero-actions">
+          <button id="refresh-btn" class="btn btn-solid" data-i18n="btn_refresh">刷新虚拟数据</button>
+          <button id="toggle-auto-btn" class="btn btn-ghost" data-i18n="btn_auto_on">自动刷新：开</button>
+          <button id="init-zones-btn" class="btn btn-ghost" data-i18n="btn_init">初始化圈区</button>
+          <button id="settings-btn" class="btn btn-ghost" data-i18n="btn_settings">设置</button>
+          <p class="stamp"><span data-i18n="label_generated_at">生成时间：</span><span id="generated-at">-</span></p>
+          <p class="stamp"><span data-i18n="label_runtime">运行配置：</span><span id="runtime-profile">-</span></p>
+        </div>
+      </header>
+
+      <section class="kpi-grid" id="kpi-grid"></section>
+
+      <section class="panel-group">
+        <article class="panel panel-wide">
+          <div class="panel-head">
+            <h2 data-i18n="section1_title">1. 虚拟跑轮传感器</h2>
+            <p data-i18n="section1_desc">速度、圈数、方向与跑停切换强度</p>
+          </div>
+          <div class="chart-grid chart-grid-2">
+            <div class="chart-box">
+              <h3 data-i18n="chart_speed_rpm">速度与 RPM 时间线（24h）</h3>
+              <div id="chart-speed-rpm" class="chart"></div>
+            </div>
+            <div class="chart-box">
+              <h3 data-i18n="chart_hourly_distance">小时里程 + 跑停切换次数</h3>
+              <div id="chart-hourly-distance" class="chart"></div>
+            </div>
+            <div class="chart-box">
+              <h3 data-i18n="chart_direction">方向分布</h3>
+              <div id="chart-direction" class="chart"></div>
+            </div>
+            <div class="chart-box">
+              <h3 data-i18n="chart_running_streak">连续奔跑时长趋势</h3>
+              <div id="chart-running-streak" class="chart"></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel panel-wide">
+          <div class="panel-head">
+            <h2 data-i18n="section2_title">2. 空间活跃度与领地分析</h2>
+            <p data-i18n="section2_desc">热力图、巡逻路径、区域停留占比与越界检测</p>
+          </div>
+          <div class="chart-grid chart-grid-2">
+            <div class="chart-box">
+              <h3 data-i18n="chart_heatmap">24h 活动热力图</h3>
+              <div id="chart-heatmap" class="chart"></div>
+            </div>
+            <div class="chart-box">
+              <h3 data-i18n="chart_trajectory">巡逻轨迹</h3>
+              <div id="chart-trajectory" class="chart"></div>
+            </div>
+            <div class="chart-box">
+              <h3 data-i18n="chart_zone_dwell">区域停留占比</h3>
+              <div id="chart-zone-dwell" class="chart"></div>
+            </div>
+            <div class="chart-box">
+              <h3 data-i18n="chart_escape">越界时间线</h3>
+              <div id="chart-escape" class="chart"></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel panel-wide">
+          <div class="panel-head">
+            <h2 data-i18n="section3_title">3. 基于 VLM 的生理健康扫描</h2>
+            <p data-i18n="section3_desc">毛发、神态、体型变化与步态对称性</p>
+          </div>
+          <div class="chart-grid chart-grid-2">
+            <div class="chart-box">
+              <h3 data-i18n="chart_health_radar">最新健康雷达图</h3>
+              <div id="chart-health-radar" class="chart"></div>
+            </div>
+            <div class="chart-box">
+              <h3 data-i18n="chart_health_trend">健康扫描趋势</h3>
+              <div id="chart-health-trend" class="chart"></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel panel-wide">
+          <div class="panel-head">
+            <h2 data-i18n="section4_title">4. 资源状态监控</h2>
+            <p data-i18n="section4_desc">水位、粮食余量、藏粮热点和磨牙损耗</p>
+          </div>
+          <div class="chart-grid chart-grid-2">
+            <div class="chart-box">
+              <h3 data-i18n="chart_resource">水位 / 食量趋势</h3>
+              <div id="chart-resource" class="chart"></div>
+            </div>
+            <div class="chart-box">
+              <h3 data-i18n="chart_gnaw">磨牙损耗趋势</h3>
+              <div id="chart-gnaw" class="chart"></div>
+            </div>
+            <div class="chart-box">
+              <h3 data-i18n="chart_hoard">藏粮热点</h3>
+              <div id="chart-hoard" class="chart"></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel panel-wide">
+          <div class="panel-head">
+            <h2 data-i18n="section5_title">5. 行为习性与作息统计</h2>
+            <p data-i18n="section5_desc">起居规律、洗脸频率、刻板行为与挖掘时长</p>
+          </div>
+          <div class="chart-grid chart-grid-2">
+            <div class="chart-box">
+              <h3 data-i18n="chart_behavior_hourly">每小时洗脸 / 挖掘</h3>
+              <div id="chart-behavior-hourly" class="chart"></div>
+            </div>
+            <div class="chart-box">
+              <h3 data-i18n="chart_anxiety">焦虑 / 刻板行为指数</h3>
+              <div id="chart-anxiety" class="chart"></div>
+            </div>
+            <div class="chart-box schedule-box">
+              <h3 data-i18n="chart_schedule">每日作息快照</h3>
+              <div id="schedule-card" class="schedule-card"></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel panel-wide">
+          <div class="panel-head">
+            <h2 data-i18n="section6_title">6. 生活环境与运动触发拍摄</h2>
+            <p data-i18n="section6_desc">光照、清洁、垫料舒适度与画面变动触发录制</p>
+          </div>
+          <div class="chart-grid chart-grid-2">
+            <div class="chart-box">
+              <h3 data-i18n="chart_env_comfort">环境舒适度趋势</h3>
+              <div id="chart-env-comfort" class="chart"></div>
+            </div>
+            <div class="chart-box">
+              <h3 data-i18n="chart_env_factors">环境因子分项</h3>
+              <div id="chart-env-factors" class="chart"></div>
+            </div>
+            <div class="chart-box">
+              <h3 data-i18n="chart_motion">运动比率与录制状态</h3>
+              <div id="chart-motion" class="chart"></div>
+            </div>
+            <div class="chart-box">
+              <h3 data-i18n="chart_segments">录制片段</h3>
+              <div id="capture-segments" class="segment-list"></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2 data-i18n="alerts_title">告警流</h2>
+            <p data-i18n="alerts_desc">来自越界、健康、补给与环境规则的实时告警</p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th data-i18n="table_time">时间</th>
+                  <th data-i18n="table_severity">等级</th>
+                  <th data-i18n="table_type">类型</th>
+                  <th data-i18n="table_message">内容</th>
+                </tr>
+              </thead>
+              <tbody id="alerts-table"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <div id="init-modal" class="modal hidden">
+      <div class="modal-panel">
+        <div class="modal-head">
+          <h2 data-i18n="init_title">初始化笼内区域</h2>
+          <button id="init-close" class="btn btn-ghost btn-xs" data-i18n="btn_close">关闭</button>
+        </div>
+        <p class="modal-sub" data-i18n="init_sub">
+          单击添加点位，双击闭合多边形。请依次完成所有区域后保存。
+        </p>
+
+        <div class="init-layout">
+          <div class="init-canvas-wrap">
+            <canvas id="init-canvas"></canvas>
+          </div>
+          <div class="init-controls">
+            <div class="init-step-card">
+              <p class="init-label" data-i18n="init_current">当前区域</p>
+              <h3 id="init-current-region">-</h3>
+              <p id="init-current-desc" class="init-desc">-</p>
+            </div>
+
+            <div class="init-btn-grid">
+              <button id="init-undo" class="btn btn-ghost btn-xs" data-i18n="btn_undo">撤销点位</button>
+              <button id="init-clear" class="btn btn-ghost btn-xs" data-i18n="btn_clear">清空区域</button>
+              <button id="init-prev" class="btn btn-ghost btn-xs" data-i18n="btn_prev">上一区域</button>
+              <button id="init-next" class="btn btn-ghost btn-xs" data-i18n="btn_next">下一区域</button>
+            </div>
+
+            <div class="init-step-list" id="init-step-list"></div>
+
+            <button id="init-save" class="btn btn-solid" data-i18n="btn_save_regions">保存区域到配置</button>
+            <p id="init-status" class="modal-sub"></p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="settings-modal" class="modal hidden">
+      <div class="modal-panel">
+        <div class="modal-head">
+          <h2 data-i18n="settings_title">系统设置</h2>
+          <button id="settings-close" class="btn btn-ghost btn-xs" data-i18n="btn_close">关闭</button>
+        </div>
+        <p class="modal-sub" data-i18n="settings_sub">可编辑全部配置项，并设置默认语言。</p>
+
+        <div class="settings-grid">
+          <div class="settings-tools">
+            <label for="settings-run-mode" class="settings-label" data-i18n="settings_run_mode">运行模式</label>
+            <select id="settings-run-mode" class="settings-select">
+              <option value="demo">Demo</option>
+              <option value="real">Real</option>
+            </select>
+
+            <label for="settings-demo-source" class="settings-label" data-i18n="settings_demo_source">Demo 数据源</label>
+            <select id="settings-demo-source" class="settings-select">
+              <option value="virtual">虚拟数据</option>
+              <option value="uploaded_video">上传视频分析</option>
+            </select>
+
+            <label for="settings-language" class="settings-label" data-i18n="settings_language">界面语言</label>
+            <select id="settings-language" class="settings-select">
+              <option value="zh-CN">简体中文</option>
+              <option value="en-US">English</option>
+            </select>
+
+            <div id="settings-upload-block" class="settings-upload hidden">
+              <label for="settings-video-file" class="settings-label" data-i18n="settings_upload_label">上传视频文件</label>
+              <input id="settings-video-file" type="file" class="settings-file" accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/m4v" />
+              <div class="settings-btns">
+                <button id="settings-upload" class="btn btn-ghost btn-xs" data-i18n="btn_upload_video">上传视频</button>
+                <button id="settings-analyze" class="btn btn-ghost btn-xs" data-i18n="btn_analyze_video">分析视频</button>
+              </div>
+              <p id="settings-upload-status" class="modal-sub"></p>
+            </div>
+
+            <div class="settings-btns">
+              <button id="settings-reload" class="btn btn-ghost btn-xs" data-i18n="btn_reload_config">重载配置</button>
+              <button id="settings-save" class="btn btn-solid btn-xs" data-i18n="btn_save_config">保存配置</button>
+            </div>
+
+            <p id="settings-status" class="modal-sub"></p>
+          </div>
+          <div class="settings-editor-wrap">
+            <label for="settings-editor" class="settings-label" data-i18n="settings_editor_label">配置编辑器（JSON）</label>
+            <textarea id="settings-editor" class="settings-editor" spellcheck="false"></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <script src="/web/app.js" type="module"></script>
+  </body>
+</html>

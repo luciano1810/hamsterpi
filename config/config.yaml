@@ -1,0 +1,121 @@
+app:
+  title: HamsterPi Monitoring Console
+  timezone: America/Los_Angeles
+  run_mode: demo
+  demo_source: virtual
+  demo_upload_dir: ./uploads
+
+video:
+  source_path: ./data/sample.mp4
+  fps: 10
+  frame_width: 960
+  frame_height: 540
+  simulate: true
+  snapshot_interval_seconds: 300
+
+runtime:
+  profile: rpi_zero2w
+  low_memory_mode: true
+  process_every_nth_frame: 3
+  max_frame_results: 320
+  analysis_scale: 0.5
+  max_analysis_width: 480
+  max_analysis_height: 270
+  max_fps: 10
+  store_debug_frames: false
+
+motion_trigger:
+  enabled: true
+  downscale_width: 320
+  blur_kernel: 5
+  diff_threshold: 24
+  min_motion_ratio: 0.006
+  start_trigger_frames: 2
+  stop_trigger_frames: 15
+  min_capture_seconds: 1.5
+  cool_down_seconds: 1.0
+  output_dir: ./captures
+  record_video: true
+  output_fps: 8
+  codec: mp4v
+
+environment:
+  enabled: true
+  sample_every_nth_frame: 5
+  low_light_threshold: 0.22
+  high_light_threshold: 0.9
+  hygiene_dark_ratio_threshold: 0.24
+  clutter_edge_threshold: 0.18
+  bedding_roi: [0, 270, 960, 270]
+
+wheel:
+  diameter_cm: 18.0
+  roi: [630, 80, 280, 280]
+  min_rpm_for_running: 8.0
+  marker_hsv_ranges:
+    - lower: [0, 120, 80]
+      upper: [10, 255, 255]
+    - lower: [160, 120, 80]
+      upper: [179, 255, 255]
+
+spatial:
+  frame_width: 960
+  frame_height: 540
+  fence_polygon:
+    - [16, 16]
+    - [944, 16]
+    - [944, 524]
+    - [16, 524]
+  wheel_mask_polygon:
+    - [630, 80]
+    - [910, 80]
+    - [910, 360]
+    - [630, 360]
+  zones:
+    food_zone:
+      - [60, 60]
+      - [260, 60]
+      - [260, 200]
+      - [60, 200]
+    sand_bath_zone:
+      - [340, 320]
+      - [520, 320]
+      - [520, 500]
+      - [340, 500]
+    hideout_zone:
+      - [700, 390]
+      - [940, 390]
+      - [940, 530]
+      - [700, 530]
+
+health:
+  capture_interval_seconds: 900
+  baseline_body_area_px: 18000
+  vlm:
+    enabled: false
+    provider: openai
+    endpoint: https://api.openai.com/v1/chat/completions
+    model: gpt-4o-mini
+    api_key_env: OPENAI_API_KEY
+    timeout_seconds: 20
+
+inventory:
+  water_roi: [40, 220, 120, 220]
+  food_roi: [60, 60, 200, 140]
+  gnaw_roi: [350, 130, 160, 100]
+  low_water_threshold: 0.2
+  low_food_threshold: 0.25
+
+alerts:
+  escape_enabled: true
+  mac_notifier_command: terminal-notifier
+  max_stereotypy_index: 0.7
+  max_weight_change_ratio: 0.12
+
+frontend:
+  refresh_interval_seconds: 20
+  history_minutes: 1440
+  default_language: zh-CN
+  available_languages:
+    - zh-CN
+    - en-US
