@@ -141,6 +141,8 @@ const I18N = {
     upload_status_analyze_fail: "视频分析失败：{error}",
     mode_real_reserved: "真实模式已预留，当前暂未接入真实摄像头。",
     status_upload_then_analyze: "请选择上传视频并点击分析。",
+    status_no_frames: "视频中未检测到可分析帧。",
+    status_video_analyzed: "视频分析完成。",
     dashboard_load_fail: "数据加载失败",
     no_alerts: "当前窗口无告警。",
     no_segments: "当前窗口无运动触发录制片段。",
@@ -335,6 +337,8 @@ const I18N = {
     upload_status_analyze_fail: "Video analysis failed: {error}",
     mode_real_reserved: "Real mode is reserved and camera control is not connected yet.",
     status_upload_then_analyze: "Upload a video and click Analyze.",
+    status_no_frames: "No analyzable frames found in video.",
+    status_video_analyzed: "Video analysis completed.",
     dashboard_load_fail: "Failed to load dashboard data",
     no_alerts: "No alerts in current window.",
     no_segments: "No motion-triggered segment in this window.",
@@ -557,6 +561,18 @@ function alertMessageLabel(item) {
   const key = `alert_msg_${item.type}`;
   const translated = t(key);
   return translated === key ? item.message : translated;
+}
+
+function statusMessageLabel(message) {
+  const mapping = {
+    "real mode reserved": "mode_real_reserved",
+    "upload a video then analyze": "status_upload_then_analyze",
+    "no uploaded video": "status_upload_then_analyze",
+    "no analyzable frames": "status_no_frames",
+    "video analyzed": "status_video_analyzed",
+  };
+  const key = mapping[message];
+  return key ? t(key) : message;
 }
 
 function initCharts() {
@@ -1034,7 +1050,9 @@ function renderAlerts(data) {
 
 function renderGeneratedAt(data) {
   document.getElementById("generated-at").textContent = new Date(data.generated_at).toLocaleString();
-  document.getElementById("runtime-profile").textContent = data.meta?.runtime_profile || "default";
+  const runtime = data.meta?.runtime_profile || "default";
+  const status = data.meta?.status_message ? ` | ${statusMessageLabel(data.meta.status_message)}` : "";
+  document.getElementById("runtime-profile").textContent = `${runtime}${status}`;
   currentRunMode = data.meta?.run_mode || currentRunMode;
   currentDemoSource = data.meta?.demo_source || currentDemoSource;
   uploadedVideoName = data.meta?.uploaded_video_name || uploadedVideoName;
@@ -1486,11 +1504,7 @@ function bindEvents() {
     refreshBtn.disabled = true;
     refreshBtn.textContent = t("btn_refreshing");
     try {
-      if (currentRunMode === "demo" && currentDemoSource === "uploaded_video") {
-        await analyzeDemoVideo();
-      } else {
-        await loadDashboard(true);
-      }
+      await loadDashboard(true);
     } finally {
       refreshBtn.disabled = false;
       refreshBtn.textContent = t("btn_refresh");
@@ -1540,6 +1554,9 @@ function bindEvents() {
   document.getElementById("settings-run-mode").addEventListener("change", (event) => {
     currentRunMode = event.target.value;
     updateUploadBlockVisibility();
+    if (currentRunMode === "real") {
+      document.getElementById("settings-status").textContent = t("mode_real_reserved");
+    }
   });
   document.getElementById("settings-demo-source").addEventListener("change", (event) => {
     currentDemoSource = event.target.value;

@@ -56,6 +56,22 @@ Open `http://<pi-ip>:8000`.
   - `frontend.default_language`
   - `frontend.available_languages`
 
+## Mode Switching
+
+- `app.run_mode`:
+  - `demo` (default)
+  - `real` (reserved for real camera control)
+- `app.demo_source` (available when `run_mode=demo`):
+  - `virtual` (use synthetic dashboard data)
+  - `uploaded_video` (upload a video and run analysis)
+- `app.demo_upload_dir`: uploaded demo video storage path
+
+In UI settings, you can switch mode directly:
+
+1. Select `Demo` + `Virtual Data` for synthetic dashboard.
+2. Select `Demo` + `Uploaded Video Analysis`, upload video, then click analyze.
+3. Select `Real` to enter reserved mode (camera integration placeholder).
+
 ## First-Time Initialization (圈区)
 
 1. Open dashboard and click `Initialize Zones`
@@ -90,6 +106,9 @@ Only motion periods are recorded/captured, reducing CPU and storage.
 - `GET /api/config`
 - `GET /api/config/raw`
 - `POST /api/config/raw`
+- `GET /api/demo/status`
+- `POST /api/demo/upload`
+- `POST /api/demo/analyze-upload`
 - `GET /api/dashboard`
 - `GET /api/dashboard?refresh=true`
 - `POST /api/dashboard/refresh`
