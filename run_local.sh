@@ -7,10 +7,43 @@ cd "$SCRIPT_DIR"
 HOST="${HOST:-127.0.0.1}"
 APP_PORT="${APP_PORT:-8000}"
 LOG_PORT="${LOG_PORT:-8002}"
-CONDA_ENV_NAME="${CONDA_ENV_NAME:-hamsterpi-local}"
-CONDA_PYTHON_VERSION="${CONDA_PYTHON_VERSION:-3.11}"
 REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-requirements.txt}"
 UVICORN_BIN="${UVICORN_BIN:-uvicorn}"
+VENV_DIR="${VENV_DIR:-$SCRIPT_DIR/.venv}"
+VENV_PYTHON_BIN="${VENV_PYTHON_BIN:-python3}"
+
+ensure_requirements_file() {
+  if [[ ! -f "$REQUIREMENTS_FILE" ]]; then
+    echo "Error: requirements file not found: $REQUIREMENTS_FILE"
+    exit 1
+  fi
+}
+
+activate_or_create_venv() {
+  local activate_script="$VENV_DIR/bin/activate"
+
+  ensure_requirements_file
+
+  if [[ ! -f "$activate_script" ]]; then
+    if ! command -v "$VENV_PYTHON_BIN" >/dev/null 2>&1; then
+      echo "Error: '$VENV_PYTHON_BIN' not found, cannot create virtualenv."
+      exit 1
+    fi
+
+    echo "[run_local] creating virtualenv at: $VENV_DIR"
+    "$VENV_PYTHON_BIN" -m venv "$VENV_DIR"
+    # shellcheck source=/dev/null
+    source "$activate_script"
+    python -m pip install --upgrade pip
+    python -m pip install -r "$REQUIREMENTS_FILE"
+    echo "[run_local] activated virtualenv: $VENV_DIR (new)"
+    return
+  fi
+
+  # shellcheck source=/dev/null
+  source "$activate_script"
+  echo "[run_local] activated virtualenv: $VENV_DIR"
+}
 
 activate_python_env() {
   if [[ -n "${VIRTUAL_ENV:-}" ]]; then
@@ -18,43 +51,12 @@ activate_python_env() {
     return
   fi
 
-  if [[ -f "$SCRIPT_DIR/.venv/bin/activate" ]]; then
-    # shellcheck source=/dev/null
-    source "$SCRIPT_DIR/.venv/bin/activate"
-    echo "[run_local] activated virtualenv: .venv"
+  if [[ -n "${CONDA_PREFIX:-}" ]]; then
+    echo "[run_local] using active conda env: ${CONDA_PREFIX}"
     return
   fi
 
-  if ! command -v conda >/dev/null 2>&1; then
-    echo "Error: no active virtualenv, .venv not found, and conda is unavailable."
-    echo "Create .venv manually or install conda."
-    exit 1
-  fi
-
-  local conda_base
-  conda_base="$(conda info --base 2>/dev/null || true)"
-  if [[ -z "$conda_base" || ! -f "$conda_base/etc/profile.d/conda.sh" ]]; then
-    echo "Error: unable to locate conda activation script."
-    exit 1
-  fi
-
-  if [[ ! -f "$REQUIREMENTS_FILE" ]]; then
-    echo "Error: requirements file not found: $REQUIREMENTS_FILE"
-    exit 1
-  fi
-
-  # shellcheck source=/dev/null
-  source "$conda_base/etc/profile.d/conda.sh"
-
-  if ! conda run -n "$CONDA_ENV_NAME" python -c "import sys" >/dev/null 2>&1; then
-    echo "[run_local] conda env '$CONDA_ENV_NAME' not found, creating..."
-    conda create -y -n "$CONDA_ENV_NAME" "python=${CONDA_PYTHON_VERSION}"
-    conda run -n "$CONDA_ENV_NAME" python -m pip install --upgrade pip
-    conda run -n "$CONDA_ENV_NAME" python -m pip install -r "$REQUIREMENTS_FILE"
-  fi
-
-  conda activate "$CONDA_ENV_NAME"
-  echo "[run_local] activated conda env: $CONDA_ENV_NAME"
+  activate_or_create_venv
 }
 
 activate_python_env
