@@ -5,6 +5,7 @@ const chartIds = [
   "chart-running-streak",
   "chart-heatmap",
   "chart-trajectory",
+  "chart-position-time",
   "chart-zone-dwell",
   "chart-escape",
   "chart-health-radar",
@@ -82,6 +83,7 @@ const I18N = {
     chart_running_streak: "连续奔跑时长趋势",
     chart_heatmap: "24h 活动热力图",
     chart_trajectory: "巡逻轨迹",
+    chart_position_time: "时间 vs 区域停留",
     chart_zone_dwell: "区域停留占比",
     chart_escape: "越界时间线",
     chart_health_radar: "最新健康雷达图",
@@ -271,6 +273,8 @@ const I18N = {
     zone_food: "食盆区",
     zone_sand: "沙浴区",
     zone_hideout: "躲避窝",
+    zone_outside: "围栏外",
+    zone_unknown: "未知区域",
     legend_speed: "速度",
     legend_rpm: "RPM",
     legend_distance: "里程",
@@ -292,6 +296,7 @@ const I18N = {
     legend_trajectory_direction: "移动方向",
     legend_trajectory_start: "起点",
     legend_trajectory_end: "终点",
+    trajectory_dwell: "驻留时长",
     trajectory_time: "时间",
     trajectory_zone: "区域",
     trajectory_step: "步进",
@@ -381,6 +386,7 @@ const I18N = {
     chart_running_streak: "Running Streak Trend",
     chart_heatmap: "24h Activity Heatmap",
     chart_trajectory: "Patrol Trajectory",
+    chart_position_time: "Time vs Zone Dwell",
     chart_zone_dwell: "Zone Dwell Ratio",
     chart_escape: "Escape Timeline",
     chart_health_radar: "Latest Health Radar",
@@ -570,6 +576,8 @@ const I18N = {
     zone_food: "Food",
     zone_sand: "Sand Bath",
     zone_hideout: "Hideout",
+    zone_outside: "Outside Fence",
+    zone_unknown: "Unknown Zone",
     legend_speed: "Speed",
     legend_rpm: "RPM",
     legend_distance: "Distance",
@@ -591,6 +599,7 @@ const I18N = {
     legend_trajectory_direction: "Direction",
     legend_trajectory_start: "Start",
     legend_trajectory_end: "End",
+    trajectory_dwell: "Dwell Duration",
     trajectory_time: "Time",
     trajectory_zone: "Zone",
     trajectory_step: "Step",
@@ -1575,7 +1584,144 @@ function zoneLabel(zoneKey) {
   if (zoneKey === "food_zone") return t("zone_food");
   if (zoneKey === "sand_bath_zone") return t("zone_sand");
   if (zoneKey === "hideout_zone") return t("zone_hideout");
-  return zoneKey || "-";
+  if (zoneKey === "outside") return t("zone_outside");
+  if (!zoneKey || zoneKey === "unknown") return t("zone_unknown");
+  return zoneKey;
+}
+
+function timestampMs(ts) {
+  const ms = Date.parse(String(ts || ""));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function simplifyTrajectoryForPatrol(points, frameWidth = 0, frameHeight = 0) {
+  if (!Array.isArray(points) || points.length === 0) {
+    return [];
+  }
+  if (points.length <= 2) {
+    return points.slice();
+  }
+
+  const w = Math.max(1, Number(frameWidth) || 1);
+  const h = Math.max(1, Number(frameHeight) || 1);
+  const diag = Math.hypot(w, h);
+
+  // Larger temporal scale + anti-jitter:
+  // - micro motions around an anchor are merged;
+  // - stationary regions keep sparse points at a coarse time interval.
+  const stationaryRadiusPx = Math.max(6.5, diag * 0.006);
+  const stationaryExitRadiusPx = stationaryRadiusPx * 1.85;
+  // Oscillation inside this bigger cluster is treated as a single anchor point.
+  const anchorClusterRadiusPx = Math.max(20, stationaryExitRadiusPx * 1.6, diag * 0.023);
+  const microMovePx = Math.max(2.2, stationaryRadiusPx * 0.55);
+  const minMovingGapMs = 6500;
+  const minStationaryGapMs = 90000;
+  const minDwellConfirmMs = 12000;
+
+  const first = { ...points[0], step_px: 0, speed_px_s: 0 };
+  const simplified = [first];
+
+  let lastKept = first;
+  let anchorX = first.x;
+  let anchorY = first.y;
+  let anchorSinceMs = timestampMs(first.timestamp);
+  let inStationaryMode = false;
+
+  const pushFrom = (point, x, y) => {
+    const prevMs = timestampMs(lastKept.timestamp);
+    const currMs = timestampMs(point.timestamp);
+    const dtMs = prevMs !== null && currMs !== null ? Math.max(0, currMs - prevMs) : null;
+    const step = Math.hypot(x - lastKept.x, y - lastKept.y);
+    const speed = dtMs !== null && dtMs > 0 ? step / (dtMs / 1000) : null;
+    const next = {
+      ...point,
+      x,
+      y,
+      step_px: Number(step.toFixed(3)),
+      speed_px_s: speed === null ? null : Number(speed.toFixed(3)),
+    };
+    simplified.push(next);
+    lastKept = next;
+  };
+
+  for (let i = 1; i < points.length; i += 1) {
+    const curr = points[i];
+    if (!curr || !Number.isFinite(curr.x) || !Number.isFinite(curr.y)) {
+      continue;
+    }
+
+    const prevMs = timestampMs(lastKept.timestamp);
+    const currMs = timestampMs(curr.timestamp);
+    const dtMs = prevMs !== null && currMs !== null ? Math.max(0, currMs - prevMs) : null;
+    const distToLast = Math.hypot(curr.x - lastKept.x, curr.y - lastKept.y);
+    const distToAnchor = Math.hypot(curr.x - anchorX, curr.y - anchorY);
+    // Within anchorClusterRadiusPx, jitter and back-and-forth are collapsed to one point.
+    const nearAnchor = distToAnchor <= anchorClusterRadiusPx;
+
+    if (nearAnchor) {
+      if (currMs !== null) {
+        if (anchorSinceMs === null) {
+          anchorSinceMs = currMs;
+        } else if (!inStationaryMode && currMs - anchorSinceMs >= minDwellConfirmMs) {
+          inStationaryMode = true;
+        }
+      }
+      if (inStationaryMode && dtMs !== null && dtMs >= minStationaryGapMs) {
+        // Keep sparse dwell points but lock to anchor to suppress local jitter.
+        pushFrom(curr, anchorX, anchorY);
+      }
+      continue;
+    }
+
+    inStationaryMode = false;
+
+    if (dtMs !== null && dtMs < minMovingGapMs && distToLast < anchorClusterRadiusPx * 0.65) {
+      continue;
+    }
+    if (distToLast < microMovePx) {
+      continue;
+    }
+
+    anchorX = curr.x;
+    anchorY = curr.y;
+    anchorSinceMs = currMs;
+    pushFrom(curr, curr.x, curr.y);
+  }
+
+  const tail = points[points.length - 1];
+  if (tail && Number.isFinite(tail.x) && Number.isFinite(tail.y)) {
+    const last = simplified[simplified.length - 1];
+    const sameTs = String(last?.timestamp || "") === String(tail.timestamp || "");
+    const samePos = Math.hypot((last?.x ?? 0) - tail.x, (last?.y ?? 0) - tail.y) < 0.01;
+    if (!sameTs || !samePos) {
+      const prevMs = timestampMs(last?.timestamp);
+      const tailMs = timestampMs(tail.timestamp);
+      const dtMs = prevMs !== null && tailMs !== null ? Math.max(0, tailMs - prevMs) : null;
+      const tailDist = Math.hypot(tail.x - (last?.x ?? tail.x), tail.y - (last?.y ?? tail.y));
+      if (tailDist >= microMovePx || (dtMs !== null && dtMs >= minStationaryGapMs)) {
+        const anchorDist = Math.hypot(tail.x - anchorX, tail.y - anchorY);
+        if (anchorDist <= anchorClusterRadiusPx && dtMs !== null && dtMs >= minStationaryGapMs) {
+          pushFrom(tail, anchorX, anchorY);
+        } else {
+          pushFrom(tail, tail.x, tail.y);
+        }
+      }
+    }
+  }
+
+  return simplified;
+}
+
+function trajectoryDurationMs(points) {
+  if (!Array.isArray(points) || points.length < 2) {
+    return 0;
+  }
+  const start = timestampMs(points[0]?.timestamp);
+  const end = timestampMs(points[points.length - 1]?.timestamp);
+  if (start === null || end === null) {
+    return 0;
+  }
+  return Math.max(0, end - start);
 }
 
 function sampleTrajectory(points, maxPoints = 420) {
@@ -1605,7 +1751,7 @@ function buildTrajectorySegments(points) {
     const dx = curr.x - prev.x;
     const dy = curr.y - prev.y;
     const step = Number.isFinite(Number(curr.step_px)) ? Number(curr.step_px) : Math.hypot(dx, dy);
-    if (step < 0.2) {
+    if (step < 2.0) {
       continue;
     }
     segments.push({
@@ -1961,12 +2107,26 @@ function renderSpatial(data) {
       y: Number(p?.y),
       timestamp: p?.timestamp || "",
       zone: p?.zone || "",
+      escape: Boolean(p?.escape),
       step_px: Number.isFinite(Number(p?.step_px)) ? Number(p.step_px) : null,
       speed_px_s: Number.isFinite(Number(p?.speed_px_s)) ? Number(p.speed_px_s) : null,
       heading_deg: Number.isFinite(Number(p?.heading_deg)) ? Number(p.heading_deg) : null,
     }))
     .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
-  const sampledTrajectory = sampleTrajectory(trajectoryPoints, 420);
+  const analysisWidth = Number(data.meta?.analysis_width) > 0 ? Number(data.meta.analysis_width) : 0;
+  const analysisHeight = Number(data.meta?.analysis_height) > 0 ? Number(data.meta.analysis_height) : 0;
+  const frameWidth = Number(data.meta?.frame_width) > 0 ? Number(data.meta.frame_width) : 0;
+  const frameHeight = Number(data.meta?.frame_height) > 0 ? Number(data.meta.frame_height) : 0;
+  const spatialPlaneWidth = analysisWidth > 0 ? analysisWidth : frameWidth;
+  const spatialPlaneHeight = analysisHeight > 0 ? analysisHeight : frameHeight;
+  const simplifiedTrajectory = simplifyTrajectoryForPatrol(trajectoryPoints, spatialPlaneWidth, spatialPlaneHeight);
+  const durationMs = trajectoryDurationMs(simplifiedTrajectory);
+  let targetSamplePoints = 220;
+  if (durationMs > 0) {
+    // One point roughly every 30 seconds, capped for chart readability.
+    targetSamplePoints = Math.max(80, Math.min(320, Math.round(durationMs / 30000)));
+  }
+  const sampledTrajectory = sampleTrajectory(simplifiedTrajectory, targetSamplePoints);
   const trajectoryLineData = sampledTrajectory.map((p) => ({
     value: [p.x, p.y],
     timestamp: p.timestamp,
@@ -1979,8 +2139,8 @@ function renderSpatial(data) {
   const trajectoryStart = trajectoryLineData.length > 0 ? [trajectoryLineData[0]] : [];
   const trajectoryEnd = trajectoryLineData.length > 0 ? [trajectoryLineData[trajectoryLineData.length - 1]] : [];
   const directionPeriod = Math.max(2.4, Math.min(8.5, sampledTrajectory.length / 48));
-  const xMax = Number(data.meta?.frame_width) > 0 ? Number(data.meta.frame_width) : Math.max(1, ...trajectoryPoints.map((p) => p.x));
-  const yMax = Number(data.meta?.frame_height) > 0 ? Number(data.meta.frame_height) : Math.max(1, ...trajectoryPoints.map((p) => p.y));
+  const xMax = spatialPlaneWidth > 0 ? spatialPlaneWidth : Math.max(1, ...trajectoryPoints.map((p) => p.x));
+  const yMax = spatialPlaneHeight > 0 ? spatialPlaneHeight : Math.max(1, ...trajectoryPoints.map((p) => p.y));
 
   charts["chart-trajectory"].setOption({
     animationDuration: 500,
@@ -2059,6 +2219,88 @@ function renderSpatial(data) {
       },
     ],
   });
+
+  const positionTimeLabels = sampledTrajectory.map((p, idx) => {
+    const tsMs = timestampMs(p.timestamp);
+    return tsMs === null ? `${t("point_label")} ${idx + 1}` : toHour(p.timestamp);
+  });
+  const zoneTimeline = sampledTrajectory.map((p) => {
+    if (p?.escape) {
+      return "outside";
+    }
+    if (p?.zone === "food_zone" || p?.zone === "sand_bath_zone" || p?.zone === "hideout_zone") {
+      return p.zone;
+    }
+    return "unknown";
+  });
+  const dwellMinutesByIndex = new Array(zoneTimeline.length).fill(null);
+  let segStart = 0;
+  while (segStart < zoneTimeline.length) {
+    const segZone = zoneTimeline[segStart];
+    let segEnd = segStart;
+    while (segEnd + 1 < zoneTimeline.length && zoneTimeline[segEnd + 1] === segZone) {
+      segEnd += 1;
+    }
+    const startMs = timestampMs(sampledTrajectory[segStart]?.timestamp);
+    const endMs = timestampMs(sampledTrajectory[segEnd]?.timestamp);
+    const dwellMin = startMs !== null && endMs !== null ? Math.max(0, (endMs - startMs) / 60000) : null;
+    for (let i = segStart; i <= segEnd; i += 1) {
+      dwellMinutesByIndex[i] = dwellMin;
+    }
+    segStart = segEnd + 1;
+  }
+  const zoneSeriesDefs = [
+    { key: "food_zone", name: t("zone_food"), color: c.amber },
+    { key: "sand_bath_zone", name: t("zone_sand"), color: c.blue },
+    { key: "hideout_zone", name: t("zone_hideout"), color: c.teal },
+    { key: "outside", name: t("zone_outside"), color: c.red },
+    { key: "unknown", name: t("zone_unknown"), color: c.mint },
+  ];
+  charts["chart-position-time"].setOption(
+    setCommonChartStyle({
+      grid: { left: 44, right: 20, top: 30, bottom: 44 },
+      tooltip: themedTooltip("axis", {
+        formatter: (params) => {
+          const items = Array.isArray(params) ? params : [params];
+          const dataIndex = Number.isFinite(Number(items[0]?.dataIndex)) ? Number(items[0].dataIndex) : -1;
+          const zoneItem = items.find((item) => Number(item?.data) > 0.5);
+          const zoneName = zoneItem?.seriesName || t("zone_unknown");
+          const dwellMin = dataIndex >= 0 ? dwellMinutesByIndex[dataIndex] : null;
+          const dwellText = dwellMin !== null ? `${fmtNumber(dwellMin, 1)} ${t("axis_minutes")}` : "-";
+          const timeText = String(items[0]?.axisValueLabel || "-");
+          return `${t("trajectory_time")}: ${timeText}<br/>${t("trajectory_zone")}: ${zoneName}<br/>${t("trajectory_dwell")}: ${dwellText}`;
+        },
+      }),
+      xAxis: {
+        type: "category",
+        data: positionTimeLabels,
+        axisLabel: {
+          color: c.axis,
+          interval: Math.max(0, Math.ceil(positionTimeLabels.length / 10)),
+        },
+      },
+      yAxis: {
+        type: "value",
+        min: 0,
+        max: 1,
+        name: t("axis_ratio"),
+        axisLabel: { color: c.axis, formatter: (v) => (Number(v) === 1 ? "1" : "") },
+        splitLine: { show: false },
+      },
+      legend: { data: zoneSeriesDefs.map((item) => item.name), textStyle: { color: c.legend } },
+      series: zoneSeriesDefs.map((item) => ({
+        type: "bar",
+        name: item.name,
+        stack: "zone",
+        barWidth: "96%",
+        barGap: "-100%",
+        data: zoneTimeline.map((zoneKey) => (zoneKey === item.key ? 1 : 0)),
+        itemStyle: { color: item.color, opacity: 0.86 },
+        emphasis: { focus: "series" },
+        silent: false,
+      })),
+    })
+  );
 
   const ratio = spatial.zone_dwell_ratio || {};
   charts["chart-zone-dwell"].setOption({

@@ -2,44 +2,65 @@
 
 # HamsterPi
 
-HamsterPi is a hamster monitoring stack with Raspberry Pi Zero 2W friendly defaults:
+HamsterPi is a Raspberry Pi Zero 2W friendly hamster monitoring and analytics stack, with low-memory defaults, demo upload workflow, zone initialization, and multi-panel behavioral dashboards.
 
-1. Virtual odometer (speed, distance, direction, run-stop intensity)
-2. Spatial analytics (heatmap, patrol path, zone dwell, escape fence)
-3. Visual health check (VLM-ready scoring + image heuristics)
-4. Inventory watch (water, food, hoard hotspots, gnaw wear)
-5. Behavioral logging (wake/sleep, grooming, stereotypy, digging)
-6. Living environment analysis (lighting, cleanliness, bedding evenness, comfort index)
-7. Motion-triggered capture (record only when scene changes)
+## Implementation Status (2026-02)
+
+- `demo + virtual`: available (synthetic dashboard)
+- `demo + uploaded_video`: available (upload video, initialize zones, auto analyze)
+- `real` mode: reserved (real camera control is not connected yet)
+- `Realtime` tab/page: reserved
+
+## Core Capabilities
+
+1. **Virtual odometer**: speed, distance, direction, run-stop intensity
+2. **Spatial analytics**: heatmap, patrol trajectory, zone dwell, escape detection
+3. **Perspective mapping (BEV)**: derive a stable fence quad and map to a rectangle plane
+4. **Zone mapping preview**: before/after comparison during initialization, with real warped background
+5. **Trajectory de-jitter + dwell clustering**: back-and-forth jitter near an anchor is merged
+6. **Time vs Zone Dwell chart**: timeline by zone (food/sand/hideout/outside/unknown) with dwell duration
+7. **Visual health checks**: heuristic vision metrics + optional VLM
+8. **Featured photo + feedback loop**: auto pick best hamster frame and re-rank by good/bad feedback
+9. **Inventory watch**: water level, food residue, gnaw wear
+10. **Behavior and environment analytics**: schedule, grooming/digging, anxiety, lighting/cleanliness/bedding
+11. **Motion-triggered capture**: record only when scene changes to reduce CPU/storage
 
 ## Raspberry Pi Zero 2W Focus
 
-Default config is tuned for 512MB memory:
+Defaults are tuned for 512MB memory:
 
 - `runtime.profile: rpi_zero2w`
 - low FPS and frame skipping (`process_every_nth_frame`)
 - reduced analysis resolution (`analysis_scale`, `max_analysis_width/height`)
 - bounded in-memory results (`max_frame_results`)
-- optional VLM disabled automatically in low-memory profile
+- optional VLM auto-disabled in low-memory profile
 
 ## Project Layout
 
 ```text
-config/config.yaml                   # video path, VLM, runtime, motion trigger, regions
-hamsterpi/config.py                  # typed config loader + save helpers
-hamsterpi/pipeline.py                # low-memory real video pipeline
-hamsterpi/simulator.py               # synthetic 24h telemetry
-hamsterpi/main.py                    # FastAPI APIs + init-zone endpoints
+config/config.yaml                   # video path, VLM, runtime, motion trigger, zones
+hamsterpi/config.py                  # typed config loader
+hamsterpi/pipeline.py                # low-memory video pipeline (with perspective mapping)
+hamsterpi/simulator.py               # synthetic 24h data generator
+hamsterpi/main.py                    # FastAPI APIs + zone init/mapping preview endpoints
 hamsterpi/log_viewer.py              # FastAPI log console (port 8002)
-hamsterpi/logging_system.py          # graded logging + rotating file parser
-hamsterpi/algorithms/*.py            # all algorithms
-web/index.html                       # dashboard + init-zone modal
-web/app.js                           # charts + zone-drawing logic
-web/styles.css                       # UI style
+hamsterpi/logging_system.py          # leveled logging + rotating files
+hamsterpi/algorithms/*.py            # core algorithms
+web/index.html                       # dashboard + initialization modal
+web/app.js                           # charts + upload/init/mapping preview logic
+web/styles.css                       # UI styles
 web/logs/*                           # log console web UI
 ```
 
 ## Quick Start
+
+Recommended (auto create/activate `.venv` and install dependencies):
+
+```bash
+./run_local.sh
+```
+
+Manual:
 
 ```bash
 python3 -m venv .venv
@@ -48,94 +69,66 @@ pip install -r requirements.txt
 ./scripts/run_all.sh
 ```
 
-Manual mode (two terminals):
+Or run services separately:
 
 ```bash
-# Terminal A
+# Terminal A: main app
 uvicorn hamsterpi.main:app --host 0.0.0.0 --port 8000
-# Terminal B
+
+# Terminal B: log viewer
 uvicorn hamsterpi.log_viewer:app --host 0.0.0.0 --port 8002
 ```
 
-Open `http://<pi-ip>:8000`.
-Open `http://<pi-ip>:8002` for log console.
+Open:
 
-## Settings & Language
+- `http://<pi-ip>:8000` dashboard
+- `http://<pi-ip>:8002` log console
 
-- Click `设置 / Settings` in the top-right toolbar.
-- Settings panel uses a left-group/right-detail layout (no raw JSON editor).
-- All config groups are editable via field forms and persist to `config/config.yaml`.
-- VLM API config is available under the `VLM API` group (`health.vlm`).
-- UI language is configurable in settings:
-  - default: `zh-CN`
-  - optional: `en-US`
-- Language fields in config:
-  - `frontend.default_language`
-  - `frontend.available_languages`
+## Mode Switching and Upload Flow
 
-## Mode Switching
-
-- `app.run_mode`:
+- `app.run_mode`
   - `demo` (default)
-  - `real` (reserved for real camera control)
-- `app.demo_source` (available when `run_mode=demo`):
-  - `virtual` (use synthetic dashboard data)
-  - `uploaded_video` (upload a video and run analysis)
-- `app.demo_upload_dir`: uploaded demo video storage path
+  - `real` (reserved)
+- `app.demo_source` (effective when `run_mode=demo`)
+  - `virtual` (synthetic data)
+  - `uploaded_video` (uploaded video analysis)
 
-In UI settings, you can switch mode directly:
+`uploaded_video` flow:
 
-1. Select `Demo` + `Virtual Data` for synthetic dashboard.
-2. Select `Demo` + `Uploaded Video Analysis`, then:
-   - browser extracts and uploads the original-resolution first frame first (for zone initialization background)
-   - browser compresses video locally first
-   - if browser codec/path is unsupported, fallback uploads original file
-   - uploads compressed video to backend
-   - uploaded demo videos are retained in `app.demo_upload_dir`
-   - you can select previously uploaded videos in Settings to skip compression/upload and jump to zone initialization
-   - after each new upload, initialize zones on uploaded video frame first
-   - click analyze to generate dashboard
-3. Select `Real` to enter reserved mode (camera integration placeholder).
+1. Upload a video (browser first tries uploading original first frame for init background; fallback is backend frame extraction)
+2. Open `Initialize Zones` and finish all zone polygons
+3. Click `Save Zones` and analysis is triggered automatically in demo uploaded-video mode
 
-## First-Time Initialization (圈区)
+## Zone Initialization and Mapping Preview
 
-1. Open dashboard and click `Initialize Zones`
-2. Draw polygons for required regions:
-   - `Fence Boundary`
-   - `Wheel Area`
-   - `Food Zone`
-   - `Sand Bath Zone`
-   - `Hideout Zone`
-3. Double-click to close each polygon
-4. Save regions to write `config/config.yaml`
+Required polygons:
 
-APIs used:
+- `Fence Boundary`
+- `Wheel Area`
+- `Food Zone`
+- `Sand Bath Zone`
+- `Hideout Zone`
 
-- `GET /api/init/frame?source=auto|uploaded|config` preview frame + existing regions
-- `POST /api/init/zones` persist user-defined regions and hot-reload config
-- uploaded preview source priority in uploaded-video mode:
-  1. original first-frame image uploaded via `POST /api/demo/upload-preview`
-  2. fallback to uploaded video frame if preview is unavailable
+Mapping preview behavior:
 
-Note for uploaded-video demo mode:
+- available only in `demo` mode
+- shows both camera-plane and rectangle-plane views
+- "after" panel uses real perspective-warped background image (not outline-only overlay)
+- includes `boundary_error` for quick acceptance checks
 
-- `POST /api/demo/upload-preview` uploads full-resolution first frame before video compression/upload
-- `POST /api/demo/upload` marks uploaded video as `zone_required=true`
-- `POST /api/demo/select-uploaded` selects an existing uploaded file and marks `zone_required=true`
-- analysis is blocked until zones are saved once via `POST /api/init/zones`
-- spatial analytics uses BEV-projected coordinates derived from fence polygon; wheel mask remains in original camera plane (not BEV transformed)
+## Spatial Trajectory Visualization (Latest)
 
-## Motion Trigger
+- Patrol trajectory is rendered in rectified plane coordinates, with axis preference on `analysis_width/analysis_height`
+- Long dwell periods suppress micro jitter; oscillation near a large anchor is merged into one point
+- New `Time vs Zone Dwell` chart shows where the hamster stays over time and dwell duration
 
-`motion_trigger` section in config controls scene-change recording:
+## Settings and Language
 
-- `min_motion_ratio`
-- `start_trigger_frames`
-- `stop_trigger_frames`
-- `record_video`
-- `output_dir`
-
-Only motion periods are recorded/captured, reducing CPU and storage.
+- Settings panel uses left-group + right-detail editor layout
+- Changes persist to `config/config.yaml`
+- UI languages:
+  - `zh-CN` (default)
+  - `en-US`
 
 ## Main APIs
 
@@ -147,29 +140,28 @@ Only motion periods are recorded/captured, reducing CPU and storage.
 - `POST /api/demo/upload`
 - `POST /api/demo/select-uploaded`
 - `POST /api/demo/analyze-upload`
+- `POST /api/demo/featured-photo/feedback`
 - `GET /api/dashboard`
 - `GET /api/dashboard?refresh=true`
 - `POST /api/dashboard/refresh`
 - `GET /api/init/frame`
+- `POST /api/init/mapping-preview`
 - `POST /api/init/zones`
 - `GET /health`
 
-Log console APIs (`8002`):
+Log viewer APIs (`8002`):
 
 - `GET /api/logs?levels=INFO,ERROR&q=keyword&limit=500`
 - `GET /health`
 
-## Graded Logging
+## Logging
 
-- Log levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`.
-- Log output is written to `logging.file_path` (default: `./logs/hamsterpi.log`).
-- Rotating file is enabled via:
-  - `logging.max_bytes`
-  - `logging.backup_count`
-- Main app (`8000`) and log console (`8002`) share the same log file.
+- Levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
+- File: `logging.file_path` (default `./logs/hamsterpi.log`)
+- Rotation: `logging.max_bytes`, `logging.backup_count`
 
-## Notes
+## Notes on Current Implementation
 
-- Synthetic dashboard works without real video.
-- Real-video processing pipeline is in `hamsterpi/pipeline.py`.
-- For real VLM calls, set API key env variable defined by `health.vlm.api_key_env`.
+- BEV mapping derives a stable quad from fence polygon candidates and then perspective-transforms zone polygons
+- Wheel mask is kept in camera plane for motion masking and is not BEV-transformed
+- `hoard_hotspots` is currently a placeholder output (empty list) in uploaded-video analysis path
