@@ -123,14 +123,48 @@ def _preview_video_path(upload_dir: Path, video_key: str) -> Path:
     return _resolve_preview_dir(upload_dir) / f"{video_key}.jpg"
 
 
-def _find_preview_for_video(config: SystemConfig, video_path: Optional[Path]) -> Optional[Path]:
-    if video_path is None:
+def _ensure_preview_for_video(config: SystemConfig, video_path: Optional[Path]) -> Optional[Path]:
+    if video_path is None or not video_path.exists():
         return None
+
     upload_dir = _resolve_upload_dir(config)
+    preview_dir = _resolve_preview_dir(upload_dir)
+    preview_dir.mkdir(parents=True, exist_ok=True)
     preview_path = _preview_video_path(upload_dir, video_path.name)
+
     if preview_path.exists():
-        return preview_path
-    return None
+        existing = _read_preview_image(preview_path)
+        if existing is not None and not _looks_like_black_frame(existing):
+            return preview_path
+        try:
+            preview_path.unlink()
+        except OSError:
+            return None
+
+    frame = _read_preview_frame(video_path)
+    if frame is None or frame.size == 0 or _looks_like_black_frame(frame):
+        return None
+
+    ok = cv2.imwrite(str(preview_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    if not ok:
+        return None
+
+    LOGGER.info(
+        "Generated preview from uploaded video",
+        extra={
+            "context": {
+                "video_path": str(video_path),
+                "preview_path": str(preview_path),
+                "width": int(frame.shape[1]),
+                "height": int(frame.shape[0]),
+            }
+        },
+    )
+    return preview_path
+
+
+def _find_preview_for_video(config: SystemConfig, video_path: Optional[Path]) -> Optional[Path]:
+    return _ensure_preview_for_video(config, video_path)
 
 
 def _bind_preview_to_video(config: SystemConfig, video_path: Path, preview_token: str) -> Optional[Path]:
@@ -151,12 +185,17 @@ def _bind_preview_to_video(config: SystemConfig, video_path: Path, preview_token
             try:
                 temp_path.replace(final_path)
             except OSError:
-                return None
-            return final_path
+                return _ensure_preview_for_video(config, video_path)
 
-    if final_path.exists():
-        return final_path
-    return None
+            bound = _read_preview_image(final_path)
+            if bound is not None and not _looks_like_black_frame(bound):
+                return final_path
+            try:
+                final_path.unlink()
+            except OSError:
+                pass
+
+    return _ensure_preview_for_video(config, video_path)
 
 
 def _list_uploaded_videos(config: SystemConfig, active_video_path: Optional[Path]) -> List[Dict[str, Any]]:
@@ -1056,7 +1095,7 @@ def _looks_like_black_frame(frame: np.ndarray) -> bool:
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     mean, std = cv2.meanStdDev(gray)
     max_v = float(gray.max())
-    return float(mean[0][0]) < 10.0 and float(std[0][0]) < 6.0 and max_v < 40.0
+    return float(mean[0][0]) < 3.0 and float(std[0][0]) < 3.0 and max_v < 18.0
 
 
 def _read_preview_frame(video_path: Path, max_probe_frames: int = 90) -> Optional[np.ndarray]:
@@ -1099,6 +1138,8 @@ def _read_preview_frame(video_path: Path, max_probe_frames: int = 90) -> Optiona
                 return raw
 
     cap.release()
+    if best_frame is None or _looks_like_black_frame(best_frame):
+        return None
     return best_frame
 
 
@@ -1121,18 +1162,24 @@ def _load_preview_frame(
 
     if preferred_preview_path and preferred_preview_path.exists():
         frame = _read_preview_image(preferred_preview_path)
-        if frame is not None:
+        if frame is not None and not _looks_like_black_frame(frame):
             source_type = "uploaded_preview"
+        else:
+            frame = None
 
     if frame is None and preferred_video_path and preferred_video_path.exists():
         frame = _read_preview_frame(preferred_video_path)
-        if frame is not None:
+        if frame is not None and not _looks_like_black_frame(frame):
             source_type = "uploaded_video"
+        else:
+            frame = None
 
     if frame is None and source and Path(source).exists():
         frame = _read_preview_frame(Path(source))
-        if frame is not None:
+        if frame is not None and not _looks_like_black_frame(frame):
             source_type = "video"
+        else:
+            frame = None
 
     if frame is None:
         frame = _preview_placeholder(config.video.frame_width, config.video.frame_height)
@@ -1264,7 +1311,7 @@ async def upload_demo_preview(
         preview_dir.mkdir(parents=True, exist_ok=True)
         target = _preview_temp_path(upload_dir, safe_token)
 
-        max_bytes = 25 * 1024 * 1024
+        max_bytes = 50 * 1024 * 1024
         total = 0
         chunks: List[bytes] = []
         async for chunk in request.stream():
@@ -1272,7 +1319,7 @@ async def upload_demo_preview(
                 continue
             total += len(chunk)
             if total > max_bytes:
-                raise HTTPException(status_code=400, detail="Preview image too large, max 25MB")
+                raise HTTPException(status_code=400, detail="Preview image too large, max 50MB")
             chunks.append(chunk)
 
         payload = b"".join(chunks)
@@ -1283,6 +1330,17 @@ async def upload_demo_preview(
         frame = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
         if frame is None or frame.size == 0:
             raise HTTPException(status_code=400, detail="Invalid preview image")
+        if _looks_like_black_frame(frame):
+            LOGGER.warning(
+                "Uploaded preview frame appears near-black",
+                extra={
+                    "context": {
+                        "token": safe_token,
+                        "width": int(frame.shape[1]),
+                        "height": int(frame.shape[0]),
+                    }
+                },
+            )
 
         ok = cv2.imwrite(str(target), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
         if not ok:

@@ -204,6 +204,7 @@ const I18N = {
     upload_status_preview_uploading: "正在上传原始首帧...",
     upload_status_preview_ok: "原始首帧上传成功。",
     upload_status_preview_fail: "原始首帧上传失败：{error}。将回退到视频帧。",
+    upload_status_preview_backend_fallback: "浏览器未提取到可用首帧，改由服务端从原视频生成高清圈区背景。",
     upload_status_preview_fallback_original: "为保证圈区背景分辨率，改为原视频上传（不压缩）。",
     upload_status_selecting: "正在载入已上传视频...",
     upload_status_selected_need_init: "已载入：{name}。可直接开始圈区初始化。",
@@ -493,6 +494,7 @@ const I18N = {
     upload_status_preview_uploading: "Uploading original first frame...",
     upload_status_preview_ok: "Original first frame uploaded.",
     upload_status_preview_fail: "Original first frame upload failed: {error}. Falling back to video frame.",
+    upload_status_preview_backend_fallback: "Browser preview extraction was unavailable. Server will generate a full-resolution zone background from the original video.",
     upload_status_preview_fallback_original: "To keep full-resolution zone initialization, upload will fallback to the original video (no compression).",
     upload_status_selecting: "Loading selected uploaded video...",
     upload_status_selected_need_init: "Loaded: {name}. Start zone initialization directly.",
@@ -642,6 +644,19 @@ const CLIENT_VIDEO_COMPRESS = {
   targetFps: 12,
   videoBitsPerSecond: 900000,
   chunkMs: 500,
+};
+const CLIENT_PREVIEW_EXTRACT = {
+  metadataTimeoutMs: 15000,
+  frameTimeoutMs: 30000,
+  seekTimeoutMs: 5000,
+  uploadTimeoutMs: 20000,
+  probeBudgetMs: 18000,
+  maxProbeAttempts: 12,
+  probeWidth: 96,
+  probeHeight: 54,
+  blackMeanThreshold: 3,
+  blackStdThreshold: 3,
+  blackMaxThreshold: 18,
 };
 
 const SETTINGS_SECTIONS = [
@@ -2638,11 +2653,25 @@ async function loadInitFrame(source = "auto") {
   }
 
   const image = new Image();
-  image.src = `data:image/jpeg;base64,${payload.image_b64}`;
-
+  const dataUrl = `data:image/jpeg;base64,${payload.image_b64}`;
   await new Promise((resolve, reject) => {
-    image.onload = () => resolve();
-    image.onerror = reject;
+    let settled = false;
+    const finish = (callback) => {
+      if (settled) return;
+      settled = true;
+      image.onload = null;
+      image.onerror = null;
+      callback();
+    };
+
+    image.onload = () => finish(resolve);
+    image.onerror = () => finish(() => reject(new Error("init frame image decode failed")));
+    image.src = dataUrl;
+
+    // data URL may decode before handlers are observed on slower devices/browsers.
+    if (image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
+      finish(resolve);
+    }
   });
 
   initState.image = image;
@@ -2892,31 +2921,258 @@ function withTimeout(promise, ms, label) {
   });
 }
 
+function waitForVideoReadyState(video, minReadyState, successEvents, errorMessage) {
+  return new Promise((resolve, reject) => {
+    if (video.readyState >= minReadyState) {
+      resolve();
+      return;
+    }
+
+    let pollTimer = null;
+    const onSuccess = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error(errorMessage));
+    };
+    const cleanup = () => {
+      if (pollTimer) {
+        window.clearInterval(pollTimer);
+        pollTimer = null;
+      }
+      for (const eventName of successEvents) {
+        video.removeEventListener(eventName, onSuccess);
+      }
+      video.removeEventListener("error", onError);
+    };
+
+    for (const eventName of successEvents) {
+      video.addEventListener(eventName, onSuccess);
+    }
+    video.addEventListener("error", onError);
+
+    pollTimer = window.setInterval(() => {
+      if (video.readyState >= minReadyState) {
+        cleanup();
+        resolve();
+      }
+    }, 120);
+  });
+}
+
+function buildPreviewProbeTimes(durationSeconds) {
+  const baseSeconds = [0, 0.05, 0.15, 0.35, 0.7, 1.2, 2.0, 3.0];
+  const ratioPoints = [0.03, 0.08, 0.15, 0.25, 0.4, 0.6];
+  const maxByDuration = Number.isFinite(durationSeconds) && durationSeconds > 0
+    ? Math.max(0, durationSeconds - 0.04)
+    : 3.0;
+  const points = [...baseSeconds];
+  if (Number.isFinite(durationSeconds) && durationSeconds > 0) {
+    for (const ratio of ratioPoints) {
+      points.push(durationSeconds * ratio);
+    }
+  }
+
+  const unique = new Map();
+  for (const raw of points) {
+    if (!Number.isFinite(raw)) {
+      continue;
+    }
+    const clamped = Math.min(Math.max(raw, 0), maxByDuration);
+    const key = Math.round(clamped * 1000);
+    if (!unique.has(key)) {
+      unique.set(key, clamped);
+    }
+  }
+  return Array.from(unique.values()).sort((a, b) => a - b);
+}
+
+async function seekVideoForPreview(video, targetSeconds) {
+  const duration = Number.isFinite(video.duration) ? video.duration : 0;
+  const clamped = duration > 0
+    ? Math.min(Math.max(targetSeconds, 0), Math.max(0, duration - 0.05))
+    : Math.max(targetSeconds, 0);
+
+  if (Math.abs((video.currentTime || 0) - clamped) < 0.02 && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+    return;
+  }
+
+  await withTimeout(
+    new Promise((resolve, reject) => {
+      const onSeeked = () => {
+        cleanup();
+        resolve();
+      };
+      const onLoadedData = () => {
+        if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          cleanup();
+          resolve();
+        }
+      };
+      const onError = () => {
+        cleanup();
+        reject(new Error("video seek failed"));
+      };
+      const cleanup = () => {
+        video.removeEventListener("seeked", onSeeked);
+        video.removeEventListener("loadeddata", onLoadedData);
+        video.removeEventListener("error", onError);
+      };
+
+      video.addEventListener("seeked", onSeeked);
+      video.addEventListener("loadeddata", onLoadedData);
+      video.addEventListener("error", onError);
+
+      try {
+        video.currentTime = clamped;
+      } catch (_err) {
+        cleanup();
+        reject(new Error("video seek failed"));
+        return;
+      }
+
+      if (Math.abs((video.currentTime || 0) - clamped) < 0.02 && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        cleanup();
+        resolve();
+      }
+    }),
+    CLIENT_PREVIEW_EXTRACT.seekTimeoutMs,
+    "video seek"
+  );
+}
+
+function frameBrightnessStats(imageData) {
+  const data = imageData.data;
+  if (!data || data.length < 4) {
+    return { mean: 0, std: 0, max: 0, score: 0 };
+  }
+
+  let sum = 0;
+  let sumSq = 0;
+  let max = 0;
+  let count = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const y = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+    sum += y;
+    sumSq += y * y;
+    if (y > max) {
+      max = y;
+    }
+    count += 1;
+  }
+
+  if (!count) {
+    return { mean: 0, std: 0, max: 0, score: 0 };
+  }
+
+  const mean = sum / count;
+  const variance = Math.max(0, sumSq / count - mean * mean);
+  const std = Math.sqrt(variance);
+  return {
+    mean,
+    std,
+    max,
+    score: mean + std * 2.0 + max * 0.5,
+  };
+}
+
+function looksLikeBlackPreviewFrame(stats) {
+  return stats.mean < CLIENT_PREVIEW_EXTRACT.blackMeanThreshold
+    && stats.std < CLIENT_PREVIEW_EXTRACT.blackStdThreshold
+    && stats.max < CLIENT_PREVIEW_EXTRACT.blackMaxThreshold;
+}
+
+function capturePreviewCandidate(video, fullCtx, fullCanvas, probeCtx, probeCanvas) {
+  fullCtx.drawImage(video, 0, 0, fullCanvas.width, fullCanvas.height);
+  probeCtx.drawImage(video, 0, 0, probeCanvas.width, probeCanvas.height);
+  const stats = frameBrightnessStats(probeCtx.getImageData(0, 0, probeCanvas.width, probeCanvas.height));
+  return {
+    stats,
+    score: Number(stats.score || 0),
+    time: Number(video.currentTime || 0),
+  };
+}
+
+async function selectPreviewFrameCandidate(video, fullCtx, fullCanvas, probeCtx, probeCanvas) {
+  let candidate = capturePreviewCandidate(video, fullCtx, fullCanvas, probeCtx, probeCanvas);
+  if (!looksLikeBlackPreviewFrame(candidate.stats)) {
+    return candidate;
+  }
+
+  const probeTimes = buildPreviewProbeTimes(Number(video.duration || 0));
+  const startedAt = Date.now();
+  let attempts = 0;
+
+  for (const t of probeTimes) {
+    if (attempts >= CLIENT_PREVIEW_EXTRACT.maxProbeAttempts) {
+      break;
+    }
+    if (Date.now() - startedAt > CLIENT_PREVIEW_EXTRACT.probeBudgetMs) {
+      break;
+    }
+    if (Math.abs((video.currentTime || 0) - t) < 0.02) {
+      continue;
+    }
+
+    attempts += 1;
+    try {
+      await seekVideoForPreview(video, t);
+    } catch (_err) {
+      continue;
+    }
+
+    const sampled = capturePreviewCandidate(video, fullCtx, fullCanvas, probeCtx, probeCanvas);
+    if (sampled.score > candidate.score) {
+      candidate = sampled;
+    }
+    if (!looksLikeBlackPreviewFrame(sampled.stats)) {
+      return sampled;
+    }
+  }
+
+  if (Number.isFinite(candidate.time) && candidate.time >= 0) {
+    try {
+      await seekVideoForPreview(video, candidate.time);
+      candidate = capturePreviewCandidate(video, fullCtx, fullCanvas, probeCtx, probeCanvas);
+    } catch (_err) {
+      // keep best candidate already captured
+    }
+  }
+  return candidate;
+}
+
 async function extractFirstFrameForUploadPreview(file) {
   const objectUrl = URL.createObjectURL(file);
   const video = document.createElement("video");
-  video.preload = "metadata";
+  video.preload = "auto";
   video.src = objectUrl;
   video.muted = true;
   video.playsInline = true;
   video.crossOrigin = "anonymous";
+  video.load();
 
   try {
     await withTimeout(
-      new Promise((resolve, reject) => {
-        video.onloadedmetadata = () => resolve();
-        video.onerror = () => reject(new Error("video metadata load failed"));
-      }),
-      12000,
+      waitForVideoReadyState(
+        video,
+        HTMLMediaElement.HAVE_METADATA,
+        ["loadedmetadata"],
+        "video metadata load failed"
+      ),
+      CLIENT_PREVIEW_EXTRACT.metadataTimeoutMs,
       "video metadata load"
     );
 
     await withTimeout(
-      new Promise((resolve, reject) => {
-        video.onloadeddata = () => resolve();
-        video.onerror = () => reject(new Error("video first frame load failed"));
-      }),
-      12000,
+      waitForVideoReadyState(
+        video,
+        HTMLMediaElement.HAVE_CURRENT_DATA,
+        ["loadeddata", "canplay", "canplaythrough"],
+        "video first frame load failed"
+      ),
+      CLIENT_PREVIEW_EXTRACT.frameTimeoutMs,
       "video first frame load"
     );
 
@@ -2931,7 +3187,16 @@ async function extractFirstFrameForUploadPreview(file) {
     if (!ctx) {
       throw new Error("canvas context unavailable");
     }
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const probeCanvas = document.createElement("canvas");
+    probeCanvas.width = CLIENT_PREVIEW_EXTRACT.probeWidth;
+    probeCanvas.height = CLIENT_PREVIEW_EXTRACT.probeHeight;
+    const probeCtx = probeCanvas.getContext("2d", { willReadFrequently: true }) || probeCanvas.getContext("2d");
+    if (!probeCtx) {
+      throw new Error("preview probe canvas unavailable");
+    }
+
+    await selectPreviewFrameCandidate(video, ctx, canvas, probeCtx, probeCanvas);
 
     const blob = await new Promise((resolve, reject) => {
       canvas.toBlob(
@@ -2962,7 +3227,7 @@ async function uploadOriginalPreviewFrame(frame) {
   const token = makePreviewToken();
   const endpoint = `/api/demo/upload-preview?token=${encodeURIComponent(token)}`;
   const controller = new AbortController();
-  const uploadTimer = window.setTimeout(() => controller.abort(), 20000);
+  const uploadTimer = window.setTimeout(() => controller.abort(), CLIENT_PREVIEW_EXTRACT.uploadTimeoutMs);
   let response;
   try {
     response = await fetch(endpoint, {
@@ -3184,9 +3449,10 @@ async function uploadDemoVideo() {
       status.textContent = t("upload_status_preview_ok");
     } catch (err) {
       uploadedPreviewAvailable = false;
-      previewFailText = formatText("upload_status_preview_fail", { error: String(err.message || err) });
+      previewFailText = t("upload_status_preview_backend_fallback");
       forceOriginalUpload = true;
       status.textContent = `${previewFailText} ${t("upload_status_preview_fallback_original")}`;
+      console.warn("upload preview extraction failed; falling back to server-side preview generation", err);
     }
 
     let fileToUpload = file;
