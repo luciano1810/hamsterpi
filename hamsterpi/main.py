@@ -262,6 +262,16 @@ def _empty_dashboard_payload(config: SystemConfig, source: str, status_message: 
             "series": [],
             "hourly": [{"hour": f"{h:02d}:00", "comfort_index": 0.0} for h in range(24)],
         },
+        "overview": {
+            "featured_photo": None,
+            "featured_photo_feedback": {
+                "good_count": 0,
+                "bad_count": 0,
+                "last_label": "",
+                "last_at": "",
+                "last_candidate_id": "",
+            },
+        },
         "motion": {"series": [], "segments": []},
         "alerts": [],
     }
@@ -549,6 +559,8 @@ def _dashboard_from_pipeline_result(result: Dict[str, Any], config: SystemConfig
     ]
 
     alerts = sorted(alerts, key=lambda x: x["timestamp"])
+    featured_photo_raw = summary.get("featured_photo")
+    featured_photo = featured_photo_raw if isinstance(featured_photo_raw, dict) else None
 
     return {
         "generated_at": datetime.now().isoformat(),
@@ -626,6 +638,16 @@ def _dashboard_from_pipeline_result(result: Dict[str, Any], config: SystemConfig
             "series": environment_series,
             "hourly": environment_hourly,
         },
+        "overview": {
+            "featured_photo": featured_photo,
+            "featured_photo_feedback": {
+                "good_count": 0,
+                "bad_count": 0,
+                "last_label": "",
+                "last_at": "",
+                "last_candidate_id": "",
+            },
+        },
         "motion": {
             "series": motion_series,
             "segments": summary.get("motion_segments", []),
@@ -661,6 +683,159 @@ class DashboardState:
         self.uploaded_analyzed_at: Optional[datetime] = None
         self.uploaded_zone_required: bool = False
         self.uploaded_zone_token: str = ""
+        self.uploaded_featured_candidates: List[Dict[str, Any]] = []
+        self.uploaded_selected_featured_id: str = ""
+        self._featured_feedback_good: List[np.ndarray] = []
+        self._featured_feedback_bad: List[np.ndarray] = []
+        self._featured_feedback_blocked_ids: set[str] = set()
+        self._featured_feedback_history: List[Dict[str, str]] = []
+
+    def _reset_featured_feedback_state(self) -> None:
+        self.uploaded_featured_candidates = []
+        self.uploaded_selected_featured_id = ""
+        self._featured_feedback_good = []
+        self._featured_feedback_bad = []
+        self._featured_feedback_blocked_ids = set()
+        self._featured_feedback_history = []
+
+    @staticmethod
+    def _candidate_vector(candidate: Dict[str, Any]) -> Optional[np.ndarray]:
+        raw = candidate.get("feature_vector")
+        if not isinstance(raw, list):
+            return None
+        vec = np.array([float(v) for v in raw if isinstance(v, (int, float))], dtype=np.float32)
+        if vec.size == 0:
+            return None
+        norm = float(np.linalg.norm(vec))
+        if norm <= 1e-6:
+            return None
+        return vec / norm
+
+    def _candidate_rank_score(self, candidate: Dict[str, Any]) -> float:
+        score = float(candidate.get("score", 0.0))
+        vec = self._candidate_vector(candidate)
+        if vec is not None and self._featured_feedback_good:
+            pos_sim = float(np.mean([float(np.dot(vec, ref)) for ref in self._featured_feedback_good]))
+            score += 0.22 * pos_sim
+        if vec is not None and self._featured_feedback_bad:
+            neg_sim = float(np.mean([float(np.dot(vec, ref)) for ref in self._featured_feedback_bad]))
+            score -= 0.28 * neg_sim
+        candidate_id = str(candidate.get("candidate_id", ""))
+        if candidate_id and candidate_id in self._featured_feedback_blocked_ids:
+            score -= 2.0
+        return score
+
+    def _select_featured_candidate(self, avoid_candidate_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        if not self.uploaded_featured_candidates:
+            return None
+
+        ranked: List[tuple[float, Dict[str, Any]]] = []
+        for candidate in self.uploaded_featured_candidates:
+            candidate_id = str(candidate.get("candidate_id", ""))
+            if avoid_candidate_id and candidate_id == avoid_candidate_id:
+                continue
+            ranked.append((self._candidate_rank_score(candidate), candidate))
+
+        if not ranked and avoid_candidate_id:
+            for candidate in self.uploaded_featured_candidates:
+                ranked.append((self._candidate_rank_score(candidate), candidate))
+
+        if not ranked:
+            return None
+
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        selected_score, selected = ranked[0]
+        chosen = dict(selected)
+        chosen["adjusted_score"] = round(float(selected_score), 6)
+        return chosen
+
+    def _featured_feedback_payload(self) -> Dict[str, Any]:
+        last = self._featured_feedback_history[-1] if self._featured_feedback_history else None
+        return {
+            "good_count": len(self._featured_feedback_good),
+            "bad_count": len(self._featured_feedback_bad),
+            "last_label": str(last.get("label", "")) if last else "",
+            "last_at": str(last.get("timestamp", "")) if last else "",
+            "last_candidate_id": str(last.get("candidate_id", "")) if last else "",
+        }
+
+    def _apply_featured_selection(self, selected: Optional[Dict[str, Any]]) -> None:
+        if self.uploaded_payload is None:
+            return
+
+        overview = self.uploaded_payload.setdefault("overview", {})
+        if selected is None:
+            self.uploaded_selected_featured_id = ""
+            overview["featured_photo"] = None
+            overview["featured_photo_feedback"] = self._featured_feedback_payload()
+            self.payload = self.uploaded_payload
+            return
+
+        self.uploaded_selected_featured_id = str(selected.get("candidate_id", ""))
+        overview["featured_photo"] = {
+            "candidate_id": self.uploaded_selected_featured_id,
+            "timestamp": str(selected.get("timestamp", "")),
+            "score": round(float(selected.get("adjusted_score", selected.get("score", 0.0))), 4),
+            "width": int(selected.get("width", 0)),
+            "height": int(selected.get("height", 0)),
+            "image_b64": str(selected.get("image_b64", "")),
+        }
+        overview["featured_photo_feedback"] = self._featured_feedback_payload()
+        self.payload = self.uploaded_payload
+
+    def _refresh_featured_selection(self, avoid_candidate_id: Optional[str] = None) -> None:
+        selected = self._select_featured_candidate(avoid_candidate_id=avoid_candidate_id)
+        self._apply_featured_selection(selected)
+
+    def submit_featured_photo_feedback(self, label: str, candidate_id: Optional[str]) -> Dict[str, Any]:
+        if self.uploaded_payload is None or not self.uploaded_featured_candidates:
+            raise RuntimeError("no featured photo candidates available")
+        if label not in {"good", "bad"}:
+            raise RuntimeError("invalid feedback label")
+
+        current_selected = self._select_featured_candidate()
+        target_id = candidate_id or self.uploaded_selected_featured_id
+        if not target_id and current_selected is not None:
+            target_id = str(current_selected.get("candidate_id", ""))
+        if not target_id:
+            raise RuntimeError("featured photo candidate id is required")
+
+        target = next(
+            (item for item in self.uploaded_featured_candidates if str(item.get("candidate_id", "")) == target_id),
+            None,
+        )
+        if target is None:
+            raise RuntimeError("featured photo candidate not found")
+
+        vec = self._candidate_vector(target)
+        if label == "good":
+            if vec is not None:
+                self._featured_feedback_good.append(vec)
+                self._featured_feedback_good = self._featured_feedback_good[-40:]
+            self._featured_feedback_blocked_ids.discard(target_id)
+        else:
+            if vec is not None:
+                self._featured_feedback_bad.append(vec)
+                self._featured_feedback_bad = self._featured_feedback_bad[-40:]
+            self._featured_feedback_blocked_ids.add(target_id)
+
+        self._featured_feedback_history.append(
+            {
+                "timestamp": datetime.now().isoformat(),
+                "label": label,
+                "candidate_id": target_id,
+            }
+        )
+        self._featured_feedback_history = self._featured_feedback_history[-300:]
+
+        avoid_id = target_id if label == "bad" else None
+        self._refresh_featured_selection(avoid_candidate_id=avoid_id)
+
+        overview = (self.uploaded_payload or {}).get("overview", {})
+        return {
+            "featured_photo": overview.get("featured_photo"),
+            "featured_photo_feedback": overview.get("featured_photo_feedback"),
+        }
 
     def activate_uploaded_demo_source(self) -> None:
         self.config.app.run_mode = "demo"
@@ -684,6 +859,7 @@ class DashboardState:
         self.uploaded_analyzed_at = None
         self.uploaded_zone_required = True
         self.uploaded_zone_token = str(path.resolve())
+        self._reset_featured_feedback_state()
         LOGGER.info(
             "Uploaded video registered",
             extra={
@@ -729,9 +905,22 @@ class DashboardState:
         result = pipeline.process_video(self.uploaded_video_path, max_frames=limit)
         payload = _dashboard_from_pipeline_result(result, self.config, self.uploaded_video_name or self.uploaded_video_path.name)
 
+        summary = result.get("summary", {})
+        featured_candidates_raw = summary.get("featured_photo_candidates")
+        self.uploaded_featured_candidates = (
+            featured_candidates_raw
+            if isinstance(featured_candidates_raw, list)
+            else []
+        )
+        self.uploaded_selected_featured_id = ""
+        self._featured_feedback_good = []
+        self._featured_feedback_bad = []
+        self._featured_feedback_blocked_ids = set()
+        self._featured_feedback_history = []
+
         self.uploaded_payload = payload
         self.uploaded_analyzed_at = datetime.now()
-        self.payload = payload
+        self._refresh_featured_selection()
         self.last_update = datetime.now()
         LOGGER.info(
             "Uploaded video analyzed",
@@ -792,7 +981,7 @@ class DashboardState:
                 payload = _empty_dashboard_payload(
                     self.config,
                     source="uploaded-video",
-                    status_message="upload a video then analyze",
+                    status_message="upload a video and initialize zones",
                 )
             payload["meta"]["run_mode"] = run_mode
             payload["meta"]["demo_source"] = demo_source
@@ -1263,6 +1452,33 @@ def analyze_uploaded_video(max_frames: int = Query(default=0, ge=0, le=30000)) -
             "analyzed_at": datetime.now().isoformat(),
             "meta": payload.get("meta", {}),
             "summary": payload.get("summary", {}),
+        }
+
+
+@app.post("/api/demo/featured-photo/feedback")
+def feedback_featured_photo(
+    label: str = Query(..., pattern="^(good|bad)$"),
+    candidate_id: str = Query(default="", max_length=120),
+) -> Dict[str, Any]:
+    with dashboard_state.lock:
+        cfg = dashboard_state.config
+        if cfg.app.run_mode != "demo":
+            raise HTTPException(status_code=400, detail="Feedback is only available in demo mode")
+        if cfg.app.demo_source != "uploaded_video":
+            raise HTTPException(status_code=400, detail="Feedback is only available for uploaded video analysis")
+
+        try:
+            payload = dashboard_state.submit_featured_photo_feedback(
+                label=label,
+                candidate_id=candidate_id.strip() or None,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return {
+            "status": "ok",
+            "updated_at": datetime.now().isoformat(),
+            "overview": payload,
         }
 
 

@@ -20,6 +20,9 @@ class SpatialMetrics:
     cumulative_path_length_m: float
     escape_detected: bool
     active_pixels: int
+    camera_centroid: Optional[Point]
+    camera_bbox: Optional[Tuple[int, int, int, int]]
+    tracked_area: float
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -202,9 +205,18 @@ class SpatialAnalyzer:
                 cumulative_path_length_m=self._path_length_pixels * self.meters_per_pixel,
                 escape_detected=False,
                 active_pixels=active_pixels,
+                camera_centroid=None,
+                camera_bbox=None,
+                tracked_area=0.0,
             )
 
-        _, centroid_camera = self._select_contour(motion)
+        selected_contour, centroid_camera = self._select_contour(motion)
+        camera_bbox: Optional[Tuple[int, int, int, int]] = None
+        tracked_area = 0.0
+        if selected_contour is not None:
+            bx, by, bw, bh = cv2.boundingRect(selected_contour)
+            camera_bbox = (int(bx), int(by), int(bw), int(bh))
+            tracked_area = float(cv2.contourArea(selected_contour))
         centroid_raw = self._project_point_to_bev(centroid_camera) if centroid_camera is not None else None
         centroid = self._smooth_centroid(centroid_raw) if centroid_raw is not None else None
 
@@ -269,6 +281,9 @@ class SpatialAnalyzer:
             cumulative_path_length_m=self._path_length_pixels * self.meters_per_pixel,
             escape_detected=escape_detected,
             active_pixels=active_pixels,
+            camera_centroid=centroid_camera,
+            camera_bbox=camera_bbox,
+            tracked_area=tracked_area,
         )
 
     def zone_dwell_seconds(self) -> Dict[str, float]:

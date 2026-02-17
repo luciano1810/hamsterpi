@@ -636,6 +636,9 @@ class VirtualDatasetGenerator:
                 "series": environment_series,
                 "hourly": environment_hourly_series,
             },
+            "overview": {
+                "featured_photo": None,
+            },
             "motion": {
                 "series": motion_series,
                 "segments": motion_segments,

@@ -98,6 +98,32 @@ const I18N = {
     chart_segments: "录制片段",
     alerts_title: "告警流",
     alerts_desc: "来自越界、健康、补给与环境规则的实时告警",
+    overview_photo_title: "仓鼠精选照片",
+    overview_photo_desc: "从分析视频中自动提取清晰度与构图较好的仓鼠帧。",
+    overview_photo_empty: "当前暂无可展示的仓鼠照片。请先上传视频并完成圈区初始化。",
+    overview_photo_badge: "自动精选",
+    overview_photo_alt: "仓鼠精选照片",
+    overview_photo_time: "抓拍时间",
+    overview_photo_score: "清晰评分",
+    overview_photo_size: "分辨率",
+    overview_photo_feedback_prompt: "这张照片质量如何？",
+    overview_photo_feedback_good: "好",
+    overview_photo_feedback_bad: "坏",
+    overview_photo_feedback_stats: "反馈统计：好 {good} / 坏 {bad}",
+    overview_photo_feedback_sending: "正在提交反馈...",
+    overview_photo_feedback_good_ok: "已记录“好”反馈，已按偏好重排。",
+    overview_photo_feedback_bad_ok: "已记录“坏”反馈，已重新挑选照片。",
+    overview_photo_feedback_fail: "反馈失败：{error}",
+    overview_extra_title: "分析快照",
+    overview_extra_desc: "展示当前分析任务的关键运行数据。",
+    overview_metric_source: "数据来源",
+    overview_metric_frames: "分析帧数",
+    overview_metric_fps: "源视频 FPS",
+    overview_metric_step: "抽帧步长",
+    overview_metric_bev: "透视映射",
+    overview_metric_analyzed_at: "分析时间",
+    overview_bev_enabled: "已启用",
+    overview_bev_disabled: "未启用",
     table_time: "时间",
     table_severity: "等级",
     table_type: "类型",
@@ -145,7 +171,7 @@ const I18N = {
     settings_section_alerts_desc: "越界通知与行为风险阈值配置。",
     settings_section_frontend_desc: "面板刷新周期、语言与历史窗口。",
     settings_section_logging_desc: "日志级别、落盘路径和滚动策略。",
-    settings_section_demo_tools_desc: "上传压缩视频，或选择已上传视频后直接进入圈区与分析。",
+    settings_section_demo_tools_desc: "上传压缩视频，或选择已上传视频后进入圈区；圈区保存后自动分析。",
     settings_demo_tools_hint: "请先在“应用基础”中设置 run_mode=demo 且 demo_source=uploaded_video。",
     settings_form_empty: "当前分组没有可编辑字段。",
     settings_bool_true: "是",
@@ -188,16 +214,16 @@ const I18N = {
     upload_status_compress_fail: "视频压缩失败：{error}",
     upload_status_fallback_original: "压缩失败，改为原视频上传...",
     upload_status_upload_ok: "上传成功：{name}",
-    upload_status_upload_ok_need_init: "上传成功：{name}。请先初始化圈区，再点击分析。",
+    upload_status_upload_ok_need_init: "上传成功：{name}。请先初始化圈区，保存后将自动分析。",
     upload_status_upload_fail: "上传失败：{error}",
     upload_status_analyzing: "正在分析视频...",
     upload_status_analyze_ok: "视频分析完成。",
     upload_status_analyze_fail: "视频分析失败：{error}",
-    upload_status_zone_required: "请先完成上传视频圈区初始化，再进行分析。",
+    upload_status_zone_required: "请先完成上传视频圈区初始化，保存后会自动分析。",
     upload_history_none: "暂无可选视频",
     upload_history_current: "当前",
     mode_real_reserved: "真实模式已预留，当前暂未接入真实摄像头。",
-    status_upload_then_analyze: "请选择上传视频并点击分析。",
+    status_upload_then_analyze: "请选择上传视频并完成圈区初始化。",
     status_no_frames: "视频中未检测到可分析帧。",
     status_video_analyzed: "视频分析完成。",
     dashboard_load_fail: "数据加载失败",
@@ -361,6 +387,32 @@ const I18N = {
     chart_segments: "Capture Segments",
     alerts_title: "Alerts Stream",
     alerts_desc: "Realtime alerts from escape, health, inventory and environment rules",
+    overview_photo_title: "Featured Hamster Photo",
+    overview_photo_desc: "Automatically selected from analyzed video by clarity and composition.",
+    overview_photo_empty: "No hamster photo available yet. Upload a video and finish zone initialization first.",
+    overview_photo_badge: "Auto Pick",
+    overview_photo_alt: "Featured hamster photo",
+    overview_photo_time: "Captured At",
+    overview_photo_score: "Clarity Score",
+    overview_photo_size: "Resolution",
+    overview_photo_feedback_prompt: "How good is this photo?",
+    overview_photo_feedback_good: "Good",
+    overview_photo_feedback_bad: "Bad",
+    overview_photo_feedback_stats: "Feedback: good {good} / bad {bad}",
+    overview_photo_feedback_sending: "Submitting feedback...",
+    overview_photo_feedback_good_ok: "Positive feedback saved. Re-ranked with preference.",
+    overview_photo_feedback_bad_ok: "Negative feedback saved. Picked a new photo.",
+    overview_photo_feedback_fail: "Feedback failed: {error}",
+    overview_extra_title: "Analysis Snapshot",
+    overview_extra_desc: "Key runtime metrics for the current analysis task.",
+    overview_metric_source: "Data Source",
+    overview_metric_frames: "Analyzed Frames",
+    overview_metric_fps: "Source FPS",
+    overview_metric_step: "Frame Step",
+    overview_metric_bev: "Perspective Mapping",
+    overview_metric_analyzed_at: "Analyzed At",
+    overview_bev_enabled: "Enabled",
+    overview_bev_disabled: "Disabled",
     table_time: "Time",
     table_severity: "Severity",
     table_type: "Type",
@@ -408,7 +460,7 @@ const I18N = {
     settings_section_alerts_desc: "Escape notifier and risk threshold settings.",
     settings_section_frontend_desc: "Dashboard refresh interval, language and history window.",
     settings_section_logging_desc: "Log level, file path and rotation policy.",
-    settings_section_demo_tools_desc: "Upload a compressed video, or reuse an uploaded video and jump to zone initialization.",
+    settings_section_demo_tools_desc: "Upload a compressed video, or reuse an uploaded video, then save zones to trigger auto analysis.",
     settings_demo_tools_hint: "Set run_mode=demo and demo_source=uploaded_video in App Basics first.",
     settings_form_empty: "No editable fields in current group.",
     settings_bool_true: "True",
@@ -451,16 +503,16 @@ const I18N = {
     upload_status_compress_fail: "Video compression failed: {error}",
     upload_status_fallback_original: "Compression failed, fallback to original upload...",
     upload_status_upload_ok: "Upload successful: {name}",
-    upload_status_upload_ok_need_init: "Upload successful: {name}. Initialize zones before analysis.",
+    upload_status_upload_ok_need_init: "Upload successful: {name}. Save zone initialization to start auto analysis.",
     upload_status_upload_fail: "Upload failed: {error}",
     upload_status_analyzing: "Analyzing video...",
     upload_status_analyze_ok: "Video analysis completed.",
     upload_status_analyze_fail: "Video analysis failed: {error}",
-    upload_status_zone_required: "Initialize zones for uploaded video before analysis.",
+    upload_status_zone_required: "Initialize zones for uploaded video. Analysis starts automatically after save.",
     upload_history_none: "No uploaded videos available",
     upload_history_current: "Current",
     mode_real_reserved: "Real mode is reserved and camera control is not connected yet.",
-    status_upload_then_analyze: "Upload a video and click Analyze.",
+    status_upload_then_analyze: "Upload a video and complete zone initialization.",
     status_no_frames: "No analyzable frames found in video.",
     status_video_analyzed: "Video analysis completed.",
     dashboard_load_fail: "Failed to load dashboard data",
@@ -579,6 +631,9 @@ let uploadedVideoKey = "";
 let uploadedVideos = [];
 let uploadedPreviewAvailable = false;
 let uploadedZoneRequired = false;
+let uploadedAnalyzedAt = "";
+let featuredFeedbackBusy = false;
+let featuredFeedbackMessage = "";
 let activeDashboardTab = "overview";
 let currentTheme = "dark";
 const CLIENT_VIDEO_COMPRESS = {
@@ -1405,7 +1460,6 @@ function updateUploadBlockVisibility() {
   const block = document.getElementById("settings-upload-block");
   const status = document.getElementById("settings-upload-status");
   const uploadBtn = document.getElementById("settings-upload");
-  const analyzeBtn = document.getElementById("settings-analyze");
   const useUploadedBtn = document.getElementById("settings-use-uploaded");
   const uploadedSelect = document.getElementById("settings-uploaded-select");
   if (!block || !status) {
@@ -1422,7 +1476,6 @@ function updateUploadBlockVisibility() {
   if (!inDemoToolSection) {
     status.textContent = "";
     if (uploadBtn) uploadBtn.disabled = false;
-    if (analyzeBtn) analyzeBtn.disabled = false;
     if (useUploadedBtn) useUploadedBtn.disabled = false;
     if (uploadedSelect) uploadedSelect.disabled = false;
     return;
@@ -1432,14 +1485,12 @@ function updateUploadBlockVisibility() {
   if (!modeReady) {
     status.textContent = t("settings_demo_tools_hint");
     if (uploadBtn) uploadBtn.disabled = true;
-    if (analyzeBtn) analyzeBtn.disabled = true;
     if (useUploadedBtn) useUploadedBtn.disabled = true;
     if (uploadedSelect) uploadedSelect.disabled = true;
     return;
   }
 
   if (uploadBtn) uploadBtn.disabled = false;
-  if (analyzeBtn) analyzeBtn.disabled = false;
   if (uploadedSelect) uploadedSelect.disabled = !hasUploadedOptions;
   if (useUploadedBtn) {
     const hasSelection = Boolean(uploadedSelect?.value);
@@ -1546,6 +1597,7 @@ function statusMessageLabel(message) {
   const mapping = {
     "real mode reserved": "mode_real_reserved",
     "upload a video then analyze": "status_upload_then_analyze",
+    "upload a video and initialize zones": "status_upload_then_analyze",
     "no uploaded video": "status_upload_then_analyze",
     "no analyzable frames": "status_no_frames",
     "video analyzed": "status_video_analyzed",
@@ -2215,6 +2267,155 @@ function renderMotion(data) {
     .join("");
 }
 
+function renderFeaturedPhoto(data) {
+  const box = document.getElementById("featured-photo-box");
+  if (!box) {
+    return;
+  }
+
+  const featured = data.overview?.featured_photo;
+  if (!featured || typeof featured !== "object" || !featured.image_b64) {
+    featuredFeedbackMessage = "";
+    box.innerHTML = `<div class="featured-photo-empty">${t("overview_photo_empty")}</div>`;
+    return;
+  }
+
+  const feedback = data.overview?.featured_photo_feedback || {};
+  const goodCount = Number(feedback.good_count ?? 0);
+  const badCount = Number(feedback.bad_count ?? 0);
+  const feedbackStats = formatText("overview_photo_feedback_stats", {
+    good: Math.max(0, Math.round(goodCount)),
+    bad: Math.max(0, Math.round(badCount)),
+  });
+  const feedbackText = featuredFeedbackMessage || feedbackStats;
+  const candidateId = String(featured.candidate_id || "");
+
+  const timestampText = featured.timestamp ? new Date(featured.timestamp).toLocaleString() : "-";
+  const scoreText = Number.isFinite(Number(featured.score)) ? fmtNumber(featured.score, 2) : "-";
+  const width = Number(featured.width);
+  const height = Number(featured.height);
+  const sizeText = width > 0 && height > 0 ? `${Math.round(width)} × ${Math.round(height)}` : "-";
+  const imageSrc = `data:image/jpeg;base64,${featured.image_b64}`;
+
+  box.innerHTML = `
+    <figure class="featured-photo-figure">
+      <div class="featured-photo-image-wrap">
+        <img class="featured-photo-image" src="${imageSrc}" alt="${escapeHtml(t("overview_photo_alt"))}" loading="lazy" />
+        <span class="featured-photo-badge">${t("overview_photo_badge")}</span>
+      </div>
+      <figcaption class="featured-photo-meta">
+        <span class="featured-photo-chip">${t("overview_photo_time")}: <strong>${escapeHtml(timestampText)}</strong></span>
+        <span class="featured-photo-chip">${t("overview_photo_score")}: <strong>${escapeHtml(scoreText)}</strong></span>
+        <span class="featured-photo-chip">${t("overview_photo_size")}: <strong>${escapeHtml(sizeText)}</strong></span>
+      </figcaption>
+      <div class="featured-photo-feedback">
+        <p class="featured-photo-feedback-label">${escapeHtml(t("overview_photo_feedback_prompt"))}</p>
+        <div class="featured-photo-feedback-btns">
+          <button
+            class="btn btn-ghost btn-xs featured-photo-feedback-btn"
+            data-feedback-label="good"
+            data-candidate-id="${escapeHtml(candidateId)}"
+            ${featuredFeedbackBusy || !candidateId ? "disabled" : ""}
+          >${escapeHtml(t("overview_photo_feedback_good"))}</button>
+          <button
+            class="btn btn-ghost btn-xs featured-photo-feedback-btn"
+            data-feedback-label="bad"
+            data-candidate-id="${escapeHtml(candidateId)}"
+            ${featuredFeedbackBusy || !candidateId ? "disabled" : ""}
+          >${escapeHtml(t("overview_photo_feedback_bad"))}</button>
+        </div>
+        <p class="featured-photo-feedback-status">${escapeHtml(feedbackText)}</p>
+      </div>
+    </figure>
+  `;
+
+  box.querySelectorAll(".featured-photo-feedback-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      const label = button.getAttribute("data-feedback-label") || "";
+      const id = button.getAttribute("data-candidate-id") || "";
+      submitFeaturedPhotoFeedback(label, id);
+    });
+  });
+}
+
+async function submitFeaturedPhotoFeedback(label, candidateId) {
+  if (featuredFeedbackBusy) {
+    return;
+  }
+  if (!(label === "good" || label === "bad")) {
+    return;
+  }
+  if (!candidateId) {
+    return;
+  }
+
+  featuredFeedbackBusy = true;
+  featuredFeedbackMessage = t("overview_photo_feedback_sending");
+  if (lastDashboardData) {
+    renderFeaturedPhoto(lastDashboardData);
+  }
+
+  try {
+    const endpoint = `/api/demo/featured-photo/feedback?label=${encodeURIComponent(label)}&candidate_id=${encodeURIComponent(candidateId)}`;
+    const response = await fetch(endpoint, { method: "POST" });
+    if (!response.ok) {
+      const text = await responseDetailText(response);
+      throw new Error(text || String(response.status));
+    }
+
+    featuredFeedbackMessage = label === "good"
+      ? t("overview_photo_feedback_good_ok")
+      : t("overview_photo_feedback_bad_ok");
+    await loadDashboard(false);
+  } catch (err) {
+    featuredFeedbackMessage = formatText("overview_photo_feedback_fail", { error: String(err.message || err) });
+  } finally {
+    featuredFeedbackBusy = false;
+    if (lastDashboardData) {
+      renderFeaturedPhoto(lastDashboardData);
+    }
+  }
+}
+
+function renderOverviewQuickStats(data) {
+  const box = document.getElementById("overview-quick-stats");
+  if (!box) {
+    return;
+  }
+
+  const meta = data.meta || {};
+  const sourceText = meta.source ? String(meta.source) : "-";
+  const analyzedCount = Number(meta.analysis_analyzed_count ?? 0);
+  const processedCount = Number(meta.analysis_processed_count ?? 0);
+  const framesText = analyzedCount > 0 || processedCount > 0 ? `${Math.round(analyzedCount)} / ${Math.round(processedCount)}` : "-";
+  const fps = Number(meta.analysis_source_fps);
+  const fpsText = Number.isFinite(fps) && fps > 0 ? fmtNumber(fps, 2) : "-";
+  const step = Number(meta.analysis_frame_step);
+  const stepText = Number.isFinite(step) && step > 0 ? `1/${Math.round(step)}` : "-";
+  const bevText = meta.spatial_bev_enabled ? t("overview_bev_enabled") : t("overview_bev_disabled");
+  const analyzedAt = meta.uploaded_analyzed_at ? new Date(meta.uploaded_analyzed_at).toLocaleString() : "-";
+
+  const cards = [
+    [t("overview_metric_source"), sourceText],
+    [t("overview_metric_frames"), framesText],
+    [t("overview_metric_fps"), fpsText],
+    [t("overview_metric_step"), stepText],
+    [t("overview_metric_bev"), bevText],
+    [t("overview_metric_analyzed_at"), analyzedAt],
+  ];
+
+  box.innerHTML = cards
+    .map(
+      ([label, value]) => `
+        <div class="overview-stat-card">
+          <p class="overview-stat-label">${escapeHtml(label)}</p>
+          <p class="overview-stat-value">${escapeHtml(String(value))}</p>
+        </div>
+      `
+    )
+    .join("");
+}
+
 function renderAlerts(data) {
   const rows = (data.alerts || []).slice(-120).reverse();
   const tbody = document.getElementById("alerts-table");
@@ -2253,6 +2454,11 @@ function renderGeneratedAt(data) {
   if (typeof data.meta?.uploaded_zone_required === "boolean") {
     uploadedZoneRequired = data.meta.uploaded_zone_required;
   }
+  const nextUploadedAnalyzedAt = String(data.meta?.uploaded_analyzed_at || "");
+  if (nextUploadedAnalyzedAt !== uploadedAnalyzedAt) {
+    uploadedAnalyzedAt = nextUploadedAnalyzedAt;
+    featuredFeedbackMessage = "";
+  }
   updateModeSelectorsLabel();
   updateUploadBlockVisibility();
 }
@@ -2260,6 +2466,8 @@ function renderGeneratedAt(data) {
 function renderDashboard(data) {
   renderGeneratedAt(data);
   renderKpis(data.summary);
+  renderFeaturedPhoto(data);
+  renderOverviewQuickStats(data);
   renderAlerts(data);
   if (!hasChartsInitialized()) {
     return;
@@ -2586,6 +2794,20 @@ async function saveInitZones() {
   statusNode.textContent = t("init_status_saved");
   await loadConfig();
   await loadDemoStatus();
+
+  const shouldAutoAnalyze =
+    currentRunMode === "demo"
+    && currentDemoSource === "uploaded_video"
+    && !uploadedZoneRequired
+    && Boolean(uploadedVideoKey || uploadedVideoName);
+  if (shouldAutoAnalyze) {
+    const analyzed = await analyzeUploadedVideoWithStatus(statusNode, false);
+    if (analyzed) {
+      closeModal("init-modal");
+      return;
+    }
+  }
+
   await loadDashboard(true);
 }
 
@@ -2621,6 +2843,7 @@ async function loadDemoStatus() {
     }
     uploadedPreviewAvailable = Boolean(status.uploaded_preview_available);
     uploadedZoneRequired = Boolean(status.zone_required);
+    uploadedAnalyzedAt = String(status.uploaded_analyzed_at || uploadedAnalyzedAt || "");
     updateModeSelectorsLabel();
     renderUploadedVideoSelector();
     updateUploadBlockVisibility();
@@ -2930,7 +3153,6 @@ async function uploadDemoVideo() {
   const input = document.getElementById("settings-video-file");
   const status = document.getElementById("settings-upload-status");
   const uploadBtn = document.getElementById("settings-upload");
-  const analyzeBtn = document.getElementById("settings-analyze");
 
   if (currentRunMode !== "demo") {
     status.textContent = t("mode_real_reserved");
@@ -2948,7 +3170,6 @@ async function uploadDemoVideo() {
   }
 
   uploadBtn.disabled = true;
-  analyzeBtn.disabled = true;
   try {
     let previewToken = "";
     let forceOriginalUpload = false;
@@ -3025,7 +3246,6 @@ async function uploadDemoVideo() {
     await loadDemoStatus();
   } finally {
     uploadBtn.disabled = false;
-    analyzeBtn.disabled = false;
   }
 }
 
@@ -3033,7 +3253,6 @@ async function selectUploadedVideo() {
   const select = document.getElementById("settings-uploaded-select");
   const status = document.getElementById("settings-upload-status");
   const uploadBtn = document.getElementById("settings-upload");
-  const analyzeBtn = document.getElementById("settings-analyze");
   const useUploadedBtn = document.getElementById("settings-use-uploaded");
 
   if (currentRunMode !== "demo") {
@@ -3052,7 +3271,6 @@ async function selectUploadedVideo() {
   }
 
   if (uploadBtn) uploadBtn.disabled = true;
-  if (analyzeBtn) analyzeBtn.disabled = true;
   if (useUploadedBtn) useUploadedBtn.disabled = true;
   if (select) select.disabled = true;
 
@@ -3089,25 +3307,30 @@ async function selectUploadedVideo() {
   }
 }
 
-async function analyzeDemoVideo() {
-  const status = document.getElementById("settings-upload-status");
+async function analyzeUploadedVideoWithStatus(statusNode, openInitOnZoneRequired = true) {
+  const status = statusNode || document.getElementById("settings-upload-status");
+  if (!status) {
+    return false;
+  }
   if (currentRunMode !== "demo") {
     status.textContent = t("mode_real_reserved");
-    return;
+    return false;
   }
   if (currentDemoSource !== "uploaded_video") {
     status.textContent = t("status_upload_then_analyze");
-    return;
+    return false;
   }
   if (uploadedZoneRequired) {
     status.textContent = t("upload_status_zone_required");
-    openModal("init-modal");
-    try {
-      await loadInitFrame("uploaded");
-    } catch (err) {
-      document.getElementById("init-status").textContent = String(err);
+    if (openInitOnZoneRequired) {
+      openModal("init-modal");
+      try {
+        await loadInitFrame("uploaded");
+      } catch (err) {
+        document.getElementById("init-status").textContent = String(err);
+      }
     }
-    return;
+    return false;
   }
   status.textContent = t("upload_status_analyzing");
 
@@ -3116,20 +3339,23 @@ async function analyzeDemoVideo() {
     const text = await responseDetailText(response);
     if (String(text).includes("zone initialization required")) {
       status.textContent = t("upload_status_zone_required");
-      openModal("init-modal");
-      try {
-        await loadInitFrame("uploaded");
-      } catch (err) {
-        document.getElementById("init-status").textContent = String(err);
+      if (openInitOnZoneRequired) {
+        openModal("init-modal");
+        try {
+          await loadInitFrame("uploaded");
+        } catch (err) {
+          document.getElementById("init-status").textContent = String(err);
+        }
       }
-      return;
+      return false;
     }
     status.textContent = formatText("upload_status_analyze_fail", { error: text });
-    return;
+    return false;
   }
 
   status.textContent = t("upload_status_analyze_ok");
   await loadDashboard(false);
+  return true;
 }
 
 async function loadSettingsConfig() {
@@ -3274,7 +3500,6 @@ function bindEvents() {
   document.getElementById("settings-save").addEventListener("click", saveSettingsConfig);
   document.getElementById("settings-upload").addEventListener("click", uploadDemoVideo);
   document.getElementById("settings-use-uploaded").addEventListener("click", selectUploadedVideo);
-  document.getElementById("settings-analyze").addEventListener("click", analyzeDemoVideo);
   document.getElementById("settings-uploaded-select").addEventListener("change", () => {
     updateUploadBlockVisibility();
   });

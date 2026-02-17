@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import base64
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Deque, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -52,6 +53,14 @@ class HamsterVisionPipeline:
         scaled_zones = {name: self._scale_polygon(poly) for name, poly in config.spatial.zones.items()}
         self._spatial_bev_homography, spatial_fence, spatial_zones = self._build_spatial_bev(scaled_fence, scaled_zones)
         self._spatial_bev_enabled = self._spatial_bev_homography is not None
+        self._spatial_bev_inverse_homography: Optional[np.ndarray] = None
+        if self._spatial_bev_homography is not None:
+            try:
+                inv = np.linalg.inv(self._spatial_bev_homography)
+                if np.isfinite(inv).all():
+                    self._spatial_bev_inverse_homography = inv.astype(np.float32)
+            except np.linalg.LinAlgError:
+                self._spatial_bev_inverse_homography = None
 
         self.odometer = VirtualOdometer(
             wheel_diameter_cm=config.wheel.diameter_cm,
@@ -113,6 +122,8 @@ class HamsterVisionPipeline:
         self._last_frame_ts: Optional[datetime] = None
         self._last_health_capture: Optional[datetime] = None
         self._frame_index = 0
+        self._featured_candidates: List[Dict[str, Any]] = []
+        self._featured_candidate_limit = 42
 
     @staticmethod
     def _order_quad(points: np.ndarray) -> np.ndarray:
@@ -263,6 +274,346 @@ class HamsterVisionPipeline:
         if frame.shape[1] == self.analysis_width and frame.shape[0] == self.analysis_height:
             return frame
         return cv2.resize(frame, (self.analysis_width, self.analysis_height), interpolation=cv2.INTER_AREA)
+
+    def _analysis_to_camera_point(self, point: Tuple[float, float]) -> Optional[Tuple[float, float]]:
+        if not self._spatial_bev_enabled or self._spatial_bev_inverse_homography is None:
+            x = float(np.clip(point[0], 0, self.analysis_width - 1))
+            y = float(np.clip(point[1], 0, self.analysis_height - 1))
+            return (x, y)
+
+        src = np.array([[[float(point[0]), float(point[1])]]], dtype=np.float32)
+        projected = cv2.perspectiveTransform(src, self._spatial_bev_inverse_homography)
+        x_f, y_f = float(projected[0, 0, 0]), float(projected[0, 0, 1])
+        if not np.isfinite(x_f) or not np.isfinite(y_f):
+            return None
+        x = float(np.clip(x_f, 0, self.analysis_width - 1))
+        y = float(np.clip(y_f, 0, self.analysis_height - 1))
+        return (x, y)
+
+    def _collect_featured_candidate(self, frame: np.ndarray, payload: Dict[str, object], video_second: float) -> None:
+        candidate = self._extract_featured_candidate(frame=frame, payload=payload, video_second=video_second)
+        if candidate is None:
+            return
+        self._featured_candidates.append(candidate)
+        self._prune_featured_candidates()
+
+    def _extract_featured_candidate(
+        self,
+        frame: np.ndarray,
+        payload: Dict[str, object],
+        video_second: float,
+    ) -> Optional[Dict[str, Any]]:
+        if payload.get("skipped"):
+            return None
+
+        spatial = payload.get("spatial")
+        if not isinstance(spatial, dict):
+            return None
+        if bool(spatial.get("escape_detected", False)):
+            return None
+
+        raw_h, raw_w = frame.shape[:2]
+        if raw_w < 64 or raw_h < 64:
+            return None
+
+        centroid_camera: Optional[Tuple[float, float]] = None
+        camera_centroid_value = spatial.get("camera_centroid")
+        if (
+            isinstance(camera_centroid_value, (list, tuple, np.ndarray))
+            and len(camera_centroid_value) == 2
+        ):
+            try:
+                cx_cam = float(camera_centroid_value[0])
+                cy_cam = float(camera_centroid_value[1])
+                if np.isfinite(cx_cam) and np.isfinite(cy_cam):
+                    centroid_camera = (cx_cam, cy_cam)
+            except (TypeError, ValueError):
+                centroid_camera = None
+
+        if centroid_camera is None:
+            centroid_value = spatial.get("centroid")
+            if (
+                not isinstance(centroid_value, (list, tuple, np.ndarray))
+                or len(centroid_value) != 2
+            ):
+                return None
+            try:
+                cx_out = float(centroid_value[0])
+                cy_out = float(centroid_value[1])
+            except (TypeError, ValueError):
+                return None
+            if self._spatial_bev_enabled:
+                centroid_scaled = (cx_out, cy_out)
+            else:
+                centroid_scaled = (cx_out * self.spatial_scale_x, cy_out * self.spatial_scale_y)
+            centroid_camera = self._analysis_to_camera_point(centroid_scaled)
+            if centroid_camera is None:
+                return None
+
+        raw_cx = float(np.clip(centroid_camera[0] * raw_w / max(self.analysis_width, 1), 0, raw_w - 1))
+        raw_cy = float(np.clip(centroid_camera[1] * raw_h / max(self.analysis_height, 1), 0, raw_h - 1))
+
+        raw_scale_x = raw_w / max(self.analysis_width, 1)
+        raw_scale_y = raw_h / max(self.analysis_height, 1)
+        raw_scale = min(raw_scale_x, raw_scale_y)
+
+        bbox_camera_value = spatial.get("camera_bbox")
+        raw_bbox: Optional[Tuple[float, float, float, float]] = None
+        bbox_w_raw = 0.0
+        bbox_h_raw = 0.0
+        tracked_area = float(spatial.get("tracked_area", 0.0) or 0.0)
+        contour_density = 0.0
+        if (
+            isinstance(bbox_camera_value, (list, tuple, np.ndarray))
+            and len(bbox_camera_value) == 4
+        ):
+            try:
+                bx = float(bbox_camera_value[0])
+                by = float(bbox_camera_value[1])
+                bw = float(bbox_camera_value[2])
+                bh = float(bbox_camera_value[3])
+                if bw > 1.0 and bh > 1.0:
+                    bx = float(np.clip(bx, 0.0, self.analysis_width - 1.0))
+                    by = float(np.clip(by, 0.0, self.analysis_height - 1.0))
+                    bw = float(np.clip(bw, 1.0, self.analysis_width - bx))
+                    bh = float(np.clip(bh, 1.0, self.analysis_height - by))
+                    bbox_w_raw = max(1.0, bw * raw_scale_x)
+                    bbox_h_raw = max(1.0, bh * raw_scale_y)
+                    rbx1 = float(np.clip(bx * raw_scale_x, 0.0, raw_w - 1.0))
+                    rby1 = float(np.clip(by * raw_scale_y, 0.0, raw_h - 1.0))
+                    rbx2 = float(np.clip(rbx1 + bbox_w_raw, 1.0, raw_w))
+                    rby2 = float(np.clip(rby1 + bbox_h_raw, 1.0, raw_h))
+                    raw_bbox = (rbx1, rby1, rbx2, rby2)
+                    contour_density = tracked_area / max(bw * bh, 1.0)
+            except (TypeError, ValueError):
+                raw_bbox = None
+
+        active_pixels = float(spatial.get("active_pixels", 0.0) or 0.0)
+        active_radius = np.sqrt(max(active_pixels, 1.0) / np.pi)
+
+        min_side = min(raw_w, raw_h)
+        aspect_w_over_h = 0.72
+        h_floor = max(112.0, min_side * 0.2)
+        h_ceiling = max(h_floor, min_side * 0.58)
+        if raw_bbox is not None:
+            subject_span = max(bbox_w_raw, bbox_h_raw)
+            suggested_h = max(min_side * 0.22, subject_span * 3.0)
+        else:
+            suggested_h = max(min_side * 0.25, active_radius * raw_scale * 5.8)
+        crop_h = int(round(np.clip(suggested_h, h_floor, h_ceiling)))
+        crop_w = int(round(crop_h * aspect_w_over_h))
+        if crop_w < 78 or crop_h < 102:
+            return None
+
+        x1 = int(np.clip(round(raw_cx - crop_w / 2.0), 0, raw_w - crop_w))
+        y1 = int(np.clip(round(raw_cy - crop_h / 2.0), 0, raw_h - crop_h))
+        x2 = x1 + crop_w
+        y2 = y1 + crop_h
+        if x2 > raw_w or y2 > raw_h:
+            return None
+
+        crop = frame[y1:y2, x1:x2]
+        if crop.size == 0:
+            return None
+
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        sobel_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+        sobel_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+        gradient = cv2.magnitude(sobel_x, sobel_y)
+        lap_abs = np.abs(cv2.Laplacian(gray, cv2.CV_32F))
+
+        local_cx = float(np.clip(raw_cx - x1, 0, crop_w - 1))
+        local_cy = float(np.clip(raw_cy - y1, 0, crop_h - 1))
+        subject_mask = np.zeros(gray.shape, dtype=np.uint8)
+
+        if raw_bbox is not None:
+            rbx1, rby1, rbx2, rby2 = raw_bbox
+            lbx1 = int(np.clip(np.floor(rbx1 - x1), 0, crop_w - 1))
+            lby1 = int(np.clip(np.floor(rby1 - y1), 0, crop_h - 1))
+            lbx2 = int(np.clip(np.ceil(rbx2 - x1), 1, crop_w))
+            lby2 = int(np.clip(np.ceil(rby2 - y1), 1, crop_h))
+            if lbx2 > lbx1 + 4 and lby2 > lby1 + 4:
+                axis_x = int(np.clip(round((lbx2 - lbx1) * 0.56), 12, crop_w * 0.44))
+                axis_y = int(np.clip(round((lby2 - lby1) * 0.62), 14, crop_h * 0.48))
+                center = (int(round((lbx1 + lbx2) / 2.0)), int(round((lby1 + lby2) / 2.0)))
+                cv2.ellipse(subject_mask, center, (axis_x, axis_y), 0, 0, 360, 255, thickness=-1)
+                inner_pad_x = max(2, int(round((lbx2 - lbx1) * 0.15)))
+                inner_pad_y = max(2, int(round((lby2 - lby1) * 0.15)))
+                ix1 = int(np.clip(lbx1 + inner_pad_x, 0, crop_w - 1))
+                iy1 = int(np.clip(lby1 + inner_pad_y, 0, crop_h - 1))
+                ix2 = int(np.clip(lbx2 - inner_pad_x, 1, crop_w))
+                iy2 = int(np.clip(lby2 - inner_pad_y, 1, crop_h))
+                if ix2 > ix1 and iy2 > iy1:
+                    cv2.rectangle(subject_mask, (ix1, iy1), (ix2, iy2), 255, thickness=-1)
+
+        min_subject_pixels = max(320, int(crop_w * crop_h * 0.018))
+        if int(np.count_nonzero(subject_mask)) < min_subject_pixels:
+            fallback_radius = int(
+                np.clip(
+                    max(active_radius * raw_scale * 1.45, min(crop_w, crop_h) * 0.14),
+                    16.0,
+                    min(crop_w, crop_h) * 0.32,
+                )
+            )
+            cv2.circle(
+                subject_mask,
+                (int(round(local_cx)), int(round(local_cy))),
+                fallback_radius,
+                255,
+                thickness=-1,
+            )
+
+        subject_idx = subject_mask > 0
+        subject_pixels = int(np.count_nonzero(subject_idx))
+        if subject_pixels < 220:
+            return None
+
+        subject_gray = gray[subject_idx]
+        subject_grad = gradient[subject_idx]
+        subject_lap = lap_abs[subject_idx]
+        if subject_gray.size == 0 or subject_grad.size == 0 or subject_lap.size == 0:
+            return None
+
+        bg_grad = gradient[~subject_idx]
+        if bg_grad.size == 0:
+            bg_grad = np.array([1e-3], dtype=np.float32)
+
+        lap_p80 = float(np.percentile(subject_lap, 80))
+        grad_p88 = float(np.percentile(subject_grad, 88))
+        bg_grad_p80 = float(np.percentile(bg_grad, 80))
+        contrast = float(np.std(subject_gray))
+
+        sharp_score = float(np.clip(lap_p80 / 24.0, 0.0, 1.0))
+        detail_score = float(np.clip(grad_p88 / 72.0, 0.0, 1.0))
+        focus_ratio = (grad_p88 + 1e-3) / max(bg_grad_p80, 1e-3)
+        focus_score = float(np.clip((focus_ratio - 0.92) / 0.72, 0.0, 1.0))
+        contrast_score = float(np.clip(contrast / 48.0, 0.0, 1.0))
+
+        brightness = float(np.mean(subject_gray))
+        dark_ratio = float(np.mean(subject_gray < 24))
+        bright_ratio = float(np.mean(subject_gray > 232))
+        exposure_score = float(np.clip(1.0 - (dark_ratio + bright_ratio) * 1.65, 0.0, 1.0))
+        brightness_score = float(max(0.0, 1.0 - abs(brightness - 138.0) / 102.0))
+
+        coverage = subject_pixels / max(crop_w * crop_h, 1)
+        size_score = float(np.clip(1.0 - abs(coverage - 0.20) / 0.20, 0.0, 1.0))
+        contour_conf_score = float(np.clip((contour_density - 0.09) / 0.62, 0.0, 1.0))
+
+        center_dx = abs(raw_cx - raw_w / 2.0) / max(raw_w, 1)
+        center_dy = abs(raw_cy - raw_h / 2.0) / max(raw_h, 1)
+        center_score = float(np.clip(1.0 - np.hypot(center_dx, center_dy) / 0.56, 0.0, 1.0))
+        edge_gap = min(raw_cx, raw_cy, raw_w - 1 - raw_cx, raw_h - 1 - raw_cy)
+        edge_score = float(np.clip(edge_gap / max(crop_h * 0.20, 1.0), 0.0, 1.0))
+
+        if sharp_score < 0.18 and detail_score < 0.2:
+            return None
+        if focus_score < 0.06 and contour_conf_score < 0.14:
+            return None
+        if exposure_score < 0.08:
+            return None
+
+        base_score = (
+            sharp_score * 0.31
+            + detail_score * 0.22
+            + focus_score * 0.17
+            + contrast_score * 0.08
+            + exposure_score * 0.08
+            + brightness_score * 0.06
+            + contour_conf_score * 0.05
+            + size_score * 0.02
+            + edge_score * 0.01
+        )
+        base_score *= 0.95 + 0.05 * center_score
+        base_score = float(np.clip(base_score, 0.0, 1.0))
+
+        target_h = min(500, crop_h)
+        target_w = int(round(target_h * aspect_w_over_h))
+        if crop_w != target_w or crop_h != target_h:
+            crop = cv2.resize(crop, (target_w, target_h), interpolation=cv2.INTER_AREA)
+
+        ok, encoded = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 93])
+        if not ok:
+            return None
+        image_b64 = base64.b64encode(encoded.tobytes()).decode("ascii")
+
+        candidate_id = f"f{int(round(video_second * 1000)):09d}_{self._frame_index:07d}"
+        feature_vector = [
+            round(sharp_score, 6),
+            round(detail_score, 6),
+            round(focus_score, 6),
+            round(exposure_score, 6),
+            round(brightness_score, 6),
+            round(size_score, 6),
+            round(contour_conf_score, 6),
+            round(center_score, 6),
+        ]
+
+        return {
+            "candidate_id": candidate_id,
+            "timestamp": str(payload.get("timestamp", "")),
+            "video_second": round(float(video_second), 3),
+            "score": round(float(base_score), 6),
+            "width": int(crop.shape[1]),
+            "height": int(crop.shape[0]),
+            "image_b64": image_b64,
+            "feature_vector": feature_vector,
+        }
+
+    def _prune_featured_candidates(self) -> None:
+        if not self._featured_candidates:
+            return
+
+        ranked = sorted(self._featured_candidates, key=lambda item: float(item.get("score", 0.0)), reverse=True)
+        selected: List[Dict[str, Any]] = []
+        min_seconds_gap = 0.9
+
+        for candidate in ranked:
+            sec = float(candidate.get("video_second", 0.0))
+            too_close = any(abs(sec - float(item.get("video_second", 0.0))) < min_seconds_gap for item in selected)
+            if too_close and len(selected) >= 8:
+                continue
+            selected.append(candidate)
+            if len(selected) >= self._featured_candidate_limit:
+                break
+
+        self._featured_candidates = selected
+
+    def _featured_photo_payload(self) -> Optional[Dict[str, object]]:
+        if not self._featured_candidates:
+            return None
+        best = max(self._featured_candidates, key=lambda item: float(item.get("score", 0.0)))
+        return {
+            "candidate_id": str(best.get("candidate_id", "")),
+            "timestamp": str(best.get("timestamp", "")),
+            "score": round(float(best.get("score", 0.0)), 4),
+            "width": int(best.get("width", 0)),
+            "height": int(best.get("height", 0)),
+            "image_b64": str(best.get("image_b64", "")),
+        }
+
+    def _featured_photo_candidates_payload(self, limit: int = 24) -> List[Dict[str, object]]:
+        if not self._featured_candidates:
+            return []
+        ranked = sorted(self._featured_candidates, key=lambda item: float(item.get("score", 0.0)), reverse=True)
+        out: List[Dict[str, object]] = []
+        for candidate in ranked[: max(limit, 1)]:
+            out.append(
+                {
+                    "candidate_id": str(candidate.get("candidate_id", "")),
+                    "timestamp": str(candidate.get("timestamp", "")),
+                    "video_second": float(candidate.get("video_second", 0.0)),
+                    "score": round(float(candidate.get("score", 0.0)), 6),
+                    "width": int(candidate.get("width", 0)),
+                    "height": int(candidate.get("height", 0)),
+                    "image_b64": str(candidate.get("image_b64", "")),
+                    "feature_vector": [
+                        float(v)
+                        for v in candidate.get("feature_vector", [])
+                        if isinstance(v, (int, float))
+                    ],
+                }
+            )
+        return out
 
     def _dt_seconds(self, timestamp: datetime) -> float:
         if self._last_frame_ts is None:
@@ -416,6 +767,11 @@ class HamsterVisionPipeline:
 
                 timestamp = start_time + timedelta(seconds=frame_idx / fps)
                 payload = self.process_frame(frame=frame, timestamp=timestamp)
+                self._collect_featured_candidate(
+                    frame=frame,
+                    payload=payload,
+                    video_second=float(frame_idx / max(fps, 1e-6)),
+                )
 
                 processed_count += 1
                 if payload.get("skipped"):
@@ -475,6 +831,8 @@ class HamsterVisionPipeline:
                 "zone_dwell": self.spatial.zone_dwell_seconds(),
                 "trajectory": trajectory,
                 "heatmap": self.spatial.heatmap(),
+                "featured_photo": self._featured_photo_payload(),
+                "featured_photo_candidates": self._featured_photo_candidates_payload(limit=24),
                 "schedule": self.behavior.schedule_summary(),
                 "environment": self.environment.summary(),
                 "environment_history": self.environment.history(),

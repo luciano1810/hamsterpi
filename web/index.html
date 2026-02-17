@@ -82,6 +82,24 @@
         <section class="kpi-grid" id="kpi-grid"></section>
 
         <section class="panel-group">
+          <div class="overview-top-grid">
+            <article class="panel panel-overview-photo">
+              <div class="panel-head">
+                <h2 data-i18n="overview_photo_title">仓鼠精选照片</h2>
+                <p data-i18n="overview_photo_desc">从分析视频中自动提取清晰度与构图较好的仓鼠帧。</p>
+              </div>
+              <div id="featured-photo-box" class="featured-photo-box"></div>
+            </article>
+
+            <article class="panel panel-overview-extra">
+              <div class="panel-head">
+                <h2 data-i18n="overview_extra_title">分析快照</h2>
+                <p data-i18n="overview_extra_desc">展示当前分析任务的关键运行数据。</p>
+              </div>
+              <div id="overview-quick-stats" class="overview-quick-stats"></div>
+            </article>
+          </div>
+
           <article class="panel">
             <div class="panel-head">
               <h2 data-i18n="alerts_title">告警流</h2>
@@ -326,9 +344,8 @@
               </div>
               <label for="settings-video-file" class="settings-label" data-i18n="settings_upload_label">上传视频文件</label>
               <input id="settings-video-file" type="file" class="settings-file" accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/m4v,video/webm" />
-              <div class="settings-btns">
+              <div class="settings-btns settings-btns-single">
                 <button id="settings-upload" class="btn btn-ghost btn-xs" data-i18n="btn_upload_video">上传视频</button>
-                <button id="settings-analyze" class="btn btn-ghost btn-xs" data-i18n="btn_analyze_video">分析视频</button>
               </div>
               <p id="settings-upload-status" class="modal-sub"></p>
             </div>
@@ -338,6 +355,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-    <script src="/web/app.js?v=20260217m" type="module"></script>
+    <script src="/web/app.js?v=20260217q" type="module"></script>
   </body>
 </html>

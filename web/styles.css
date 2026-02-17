@@ -326,6 +326,152 @@ html[data-theme="light"] .btn-solid {
   font-size: 0.87rem;
 }
 
+.overview-top-grid {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.featured-photo-box {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--surface-chart);
+  min-height: 352px;
+}
+
+.featured-photo-empty {
+  min-height: 318px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  color: var(--text-soft);
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 14px;
+}
+
+.featured-photo-figure {
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.featured-photo-image-wrap {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-soft);
+  height: 318px;
+}
+
+.featured-photo-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.featured-photo-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.74rem;
+  font-family: "Sora", sans-serif;
+  letter-spacing: 0.04em;
+  color: #082421;
+  background: color-mix(in srgb, var(--accent-a) 84%, white 16%);
+}
+
+html[data-theme="light"] .featured-photo-badge {
+  color: #f7fffc;
+  background: color-mix(in srgb, var(--accent-a) 92%, black 8%);
+}
+
+.featured-photo-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.featured-photo-chip {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 6px 9px;
+  background: var(--surface-chip);
+  font-size: 0.82rem;
+  color: var(--text-main);
+}
+
+.featured-photo-feedback {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  display: grid;
+  gap: 7px;
+}
+
+.featured-photo-feedback-label {
+  margin: 0;
+  font-size: 0.79rem;
+  color: var(--text-soft);
+}
+
+.featured-photo-feedback-btns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.featured-photo-feedback-btn {
+  width: 100%;
+}
+
+.featured-photo-feedback-status {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  min-height: 1.2em;
+}
+
+.overview-quick-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-height: 352px;
+}
+
+.overview-stat-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-chart);
+  padding: 10px;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.overview-stat-label {
+  margin: 0;
+  font-size: 0.74rem;
+  font-family: "Sora", sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+
+.overview-stat-value {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-main);
+  line-height: 1.35;
+  word-break: break-word;
+}
+
 .chart-grid {
   display: grid;
   gap: 10px;
@@ -802,6 +948,21 @@ html[data-theme="light"] .badge.low {
   .settings-sidebar {
     max-height: none;
   }
+
+  .overview-top-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .featured-photo-box,
+  .overview-quick-stats {
+    min-height: 0;
+  }
+
+  .featured-photo-empty,
+  .featured-photo-image-wrap {
+    min-height: 268px;
+    height: 268px;
+  }
 }
 
 @media (max-width: 860px) {
@@ -828,6 +989,20 @@ html[data-theme="light"] .badge.low {
 
   .chart {
     height: 208px;
+  }
+
+  .featured-photo-image {
+    object-fit: cover;
+  }
+
+  .featured-photo-empty,
+  .featured-photo-image-wrap {
+    min-height: 236px;
+    height: 236px;
+  }
+
+  .overview-quick-stats {
+    grid-template-columns: 1fr;
   }
 
   .view-tab {
