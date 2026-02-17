@@ -57,6 +57,11 @@ const I18N = {
     btn_refreshing: "刷新中...",
     label_generated_at: "生成时间：",
     label_runtime: "运行配置：",
+    tab_overview: "总览",
+    tab_stats: "数据统计",
+    tab_live: "实时监控",
+    tab_live_title: "实时监控（预留）",
+    tab_live_desc: "该模块暂未接入，后续会开放实时视频流与事件看板。",
     section1_title: "1. 虚拟跑轮传感器",
     section1_desc: "速度、圈数、方向与跑停切换强度",
     section2_title: "2. 空间活跃度与领地分析",
@@ -304,6 +309,11 @@ const I18N = {
     btn_refreshing: "Refreshing...",
     label_generated_at: "Generated At: ",
     label_runtime: "Runtime Profile: ",
+    tab_overview: "Overview",
+    tab_stats: "Data Stats",
+    tab_live: "Realtime Monitor",
+    tab_live_title: "Realtime Monitoring (Reserved)",
+    tab_live_desc: "This module is reserved. Live stream and event board will be added in a future release.",
     section1_title: "1. Virtual Odometer",
     section1_desc: "Speed, revolutions, direction and stop-go intensity",
     section2_title: "2. Spatial Analytics",
@@ -533,6 +543,7 @@ const I18N = {
 };
 
 const charts = {};
+const DASHBOARD_TABS = ["overview", "stats", "live"];
 let autoRefresh = true;
 let refreshTimer = null;
 let currentLanguage = "zh-CN";
@@ -545,6 +556,7 @@ let uploadedVideoKey = "";
 let uploadedVideos = [];
 let uploadedPreviewAvailable = false;
 let uploadedZoneRequired = false;
+let activeDashboardTab = "overview";
 const CLIENT_VIDEO_COMPRESS = {
   maxWidth: 960,
   maxHeight: 540,
@@ -1401,6 +1413,49 @@ function initCharts() {
   }
 }
 
+function hasChartsInitialized() {
+  return chartIds.every((id) => Boolean(charts[id]));
+}
+
+function ensureChartsInitialized() {
+  if (hasChartsInitialized()) {
+    return;
+  }
+  initCharts();
+}
+
+function resizeCharts() {
+  Object.values(charts).forEach((chart) => chart.resize());
+}
+
+function setDashboardTab(nextTab) {
+  const normalized = DASHBOARD_TABS.includes(nextTab) ? nextTab : "overview";
+  activeDashboardTab = normalized;
+
+  document.querySelectorAll("[data-tab-target]").forEach((button) => {
+    const isActive = button.getAttribute("data-tab-target") === normalized;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+
+  document.querySelectorAll("[data-tab-panel]").forEach((panel) => {
+    const isActive = panel.getAttribute("data-tab-panel") === normalized;
+    panel.classList.toggle("active", isActive);
+  });
+
+  if (normalized !== "stats") {
+    return;
+  }
+
+  ensureChartsInitialized();
+  if (lastDashboardData) {
+    renderDashboard(lastDashboardData);
+  }
+  window.requestAnimationFrame(() => {
+    resizeCharts();
+  });
+}
+
 function renderKpis(summary = {}) {
   const kpiGrid = document.getElementById("kpi-grid");
   const entries = [
@@ -1888,6 +1943,10 @@ function renderGeneratedAt(data) {
 function renderDashboard(data) {
   renderGeneratedAt(data);
   renderKpis(data.summary);
+  renderAlerts(data);
+  if (!hasChartsInitialized()) {
+    return;
+  }
   renderOdometer(data);
   renderSpatial(data);
   renderHealth(data);
@@ -1895,7 +1954,6 @@ function renderDashboard(data) {
   renderBehavior(data);
   renderEnvironment(data);
   renderMotion(data);
-  renderAlerts(data);
 }
 
 async function loadConfig() {
@@ -2288,6 +2346,24 @@ function makePreviewToken() {
   return `pv_${Date.now()}_${randomPart}`;
 }
 
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(`${label} timeout`));
+    }, ms);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 async function extractFirstFrameForUploadPreview(file) {
   const objectUrl = URL.createObjectURL(file);
   const video = document.createElement("video");
@@ -2298,15 +2374,23 @@ async function extractFirstFrameForUploadPreview(file) {
   video.crossOrigin = "anonymous";
 
   try {
-    await new Promise((resolve, reject) => {
-      video.onloadedmetadata = () => resolve();
-      video.onerror = () => reject(new Error("video metadata load failed"));
-    });
+    await withTimeout(
+      new Promise((resolve, reject) => {
+        video.onloadedmetadata = () => resolve();
+        video.onerror = () => reject(new Error("video metadata load failed"));
+      }),
+      12000,
+      "video metadata load"
+    );
 
-    await new Promise((resolve, reject) => {
-      video.onloadeddata = () => resolve();
-      video.onerror = () => reject(new Error("video first frame load failed"));
-    });
+    await withTimeout(
+      new Promise((resolve, reject) => {
+        video.onloadeddata = () => resolve();
+        video.onerror = () => reject(new Error("video first frame load failed"));
+      }),
+      12000,
+      "video first frame load"
+    );
 
     if (!video.videoWidth || !video.videoHeight) {
       throw new Error("invalid video size");
@@ -2346,17 +2430,29 @@ async function extractFirstFrameForUploadPreview(file) {
   }
 }
 
-async function uploadOriginalPreviewFrame(file) {
+async function uploadOriginalPreviewFrame(frame) {
   const token = makePreviewToken();
-  const frame = await extractFirstFrameForUploadPreview(file);
   const endpoint = `/api/demo/upload-preview?token=${encodeURIComponent(token)}`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "image/jpeg",
-    },
-    body: frame.blob,
-  });
+  const controller = new AbortController();
+  const uploadTimer = window.setTimeout(() => controller.abort(), 20000);
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "image/jpeg",
+      },
+      body: frame.blob,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      throw new Error("preview upload timeout");
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(uploadTimer);
+  }
   if (!response.ok) {
     const detail = await responseDetailText(response);
     throw new Error(detail);
@@ -2552,8 +2648,9 @@ async function uploadDemoVideo() {
     let previewToken = "";
     status.textContent = t("upload_status_preview_preparing");
     try {
+      const previewFrame = await extractFirstFrameForUploadPreview(file);
       status.textContent = t("upload_status_preview_uploading");
-      const preview = await uploadOriginalPreviewFrame(file);
+      const preview = await uploadOriginalPreviewFrame(previewFrame);
       previewToken = preview.previewToken;
       uploadedPreviewAvailable = true;
       status.textContent = t("upload_status_preview_ok");
@@ -2798,6 +2895,17 @@ function bindEvents() {
   const toggleBtn = document.getElementById("toggle-auto-btn");
   const initBtn = document.getElementById("init-zones-btn");
   const settingsBtn = document.getElementById("settings-btn");
+  const viewTabs = document.getElementById("view-tabs");
+
+  if (viewTabs) {
+    viewTabs.addEventListener("click", (event) => {
+      const target = event.target.closest("[data-tab-target]");
+      if (!target) {
+        return;
+      }
+      setDashboardTab(target.getAttribute("data-tab-target"));
+    });
+  }
 
   refreshBtn.addEventListener("click", async () => {
     refreshBtn.disabled = true;
@@ -2892,7 +3000,7 @@ function bindEvents() {
   initState.canvas.addEventListener("dblclick", onCanvasDoubleClick);
 
   window.addEventListener("resize", () => {
-    Object.values(charts).forEach((chart) => chart.resize());
+    resizeCharts();
     layoutInitCanvasDisplay();
   });
 }
@@ -2916,8 +3024,8 @@ function startAutoRefresh() {
 
 async function bootstrap() {
   setLanguage("zh-CN");
-  initCharts();
   bindEvents();
+  setDashboardTab(activeDashboardTab);
   startAutoRefresh();
 
   try {

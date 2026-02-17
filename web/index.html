@@ -36,160 +36,214 @@
         </div>
       </header>
 
-      <section class="kpi-grid" id="kpi-grid"></section>
+      <nav class="view-tabs" id="view-tabs" role="tablist" aria-label="Dashboard Tabs">
+        <button
+          id="tab-overview"
+          class="view-tab active"
+          type="button"
+          role="tab"
+          aria-selected="true"
+          aria-controls="tab-panel-overview"
+          data-tab-target="overview"
+          data-i18n="tab_overview"
+        >
+          总览
+        </button>
+        <button
+          id="tab-stats"
+          class="view-tab"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="tab-panel-stats"
+          data-tab-target="stats"
+          data-i18n="tab_stats"
+        >
+          数据统计
+        </button>
+        <button
+          id="tab-live"
+          class="view-tab"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="tab-panel-live"
+          data-tab-target="live"
+          data-i18n="tab_live"
+        >
+          实时监控
+        </button>
+      </nav>
 
-      <section class="panel-group">
-        <article class="panel panel-wide">
-          <div class="panel-head">
-            <h2 data-i18n="section1_title">1. 虚拟跑轮传感器</h2>
-            <p data-i18n="section1_desc">速度、圈数、方向与跑停切换强度</p>
-          </div>
-          <div class="chart-grid chart-grid-2">
-            <div class="chart-box">
-              <h3 data-i18n="chart_speed_rpm">速度与 RPM 时间线（24h）</h3>
-              <div id="chart-speed-rpm" class="chart"></div>
-            </div>
-            <div class="chart-box">
-              <h3 data-i18n="chart_hourly_distance">小时里程 + 跑停切换次数</h3>
-              <div id="chart-hourly-distance" class="chart"></div>
-            </div>
-            <div class="chart-box">
-              <h3 data-i18n="chart_direction">方向分布</h3>
-              <div id="chart-direction" class="chart"></div>
-            </div>
-            <div class="chart-box">
-              <h3 data-i18n="chart_running_streak">连续奔跑时长趋势</h3>
-              <div id="chart-running-streak" class="chart"></div>
-            </div>
-          </div>
-        </article>
+      <section id="tab-panel-overview" class="tab-panel active" data-tab-panel="overview" role="tabpanel" aria-labelledby="tab-overview">
+        <section class="kpi-grid" id="kpi-grid"></section>
 
-        <article class="panel panel-wide">
-          <div class="panel-head">
-            <h2 data-i18n="section2_title">2. 空间活跃度与领地分析</h2>
-            <p data-i18n="section2_desc">热力图、巡逻路径、区域停留占比与越界检测</p>
-          </div>
-          <div class="chart-grid chart-grid-2">
-            <div class="chart-box">
-              <h3 data-i18n="chart_heatmap">24h 活动热力图</h3>
-              <div id="chart-heatmap" class="chart"></div>
+        <section class="panel-group">
+          <article class="panel">
+            <div class="panel-head">
+              <h2 data-i18n="alerts_title">告警流</h2>
+              <p data-i18n="alerts_desc">来自越界、健康、补给与环境规则的实时告警</p>
             </div>
-            <div class="chart-box">
-              <h3 data-i18n="chart_trajectory">巡逻轨迹</h3>
-              <div id="chart-trajectory" class="chart"></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th data-i18n="table_time">时间</th>
+                    <th data-i18n="table_severity">等级</th>
+                    <th data-i18n="table_type">类型</th>
+                    <th data-i18n="table_message">内容</th>
+                  </tr>
+                </thead>
+                <tbody id="alerts-table"></tbody>
+              </table>
             </div>
-            <div class="chart-box">
-              <h3 data-i18n="chart_zone_dwell">区域停留占比</h3>
-              <div id="chart-zone-dwell" class="chart"></div>
-            </div>
-            <div class="chart-box">
-              <h3 data-i18n="chart_escape">越界时间线</h3>
-              <div id="chart-escape" class="chart"></div>
-            </div>
-          </div>
-        </article>
+          </article>
+        </section>
+      </section>
 
-        <article class="panel panel-wide">
-          <div class="panel-head">
-            <h2 data-i18n="section3_title">3. 基于 VLM 的生理健康扫描</h2>
-            <p data-i18n="section3_desc">毛发、神态、体型变化与步态对称性</p>
-          </div>
-          <div class="chart-grid chart-grid-2">
-            <div class="chart-box">
-              <h3 data-i18n="chart_health_radar">最新健康雷达图</h3>
-              <div id="chart-health-radar" class="chart"></div>
+      <section id="tab-panel-stats" class="tab-panel" data-tab-panel="stats" role="tabpanel" aria-labelledby="tab-stats">
+        <section class="panel-group">
+          <article class="panel panel-wide">
+            <div class="panel-head">
+              <h2 data-i18n="section1_title">1. 虚拟跑轮传感器</h2>
+              <p data-i18n="section1_desc">速度、圈数、方向与跑停切换强度</p>
             </div>
-            <div class="chart-box">
-              <h3 data-i18n="chart_health_trend">健康扫描趋势</h3>
-              <div id="chart-health-trend" class="chart"></div>
+            <div class="chart-grid chart-grid-2">
+              <div class="chart-box">
+                <h3 data-i18n="chart_speed_rpm">速度与 RPM 时间线（24h）</h3>
+                <div id="chart-speed-rpm" class="chart"></div>
+              </div>
+              <div class="chart-box">
+                <h3 data-i18n="chart_hourly_distance">小时里程 + 跑停切换次数</h3>
+                <div id="chart-hourly-distance" class="chart"></div>
+              </div>
+              <div class="chart-box">
+                <h3 data-i18n="chart_direction">方向分布</h3>
+                <div id="chart-direction" class="chart"></div>
+              </div>
+              <div class="chart-box">
+                <h3 data-i18n="chart_running_streak">连续奔跑时长趋势</h3>
+                <div id="chart-running-streak" class="chart"></div>
+              </div>
             </div>
-          </div>
-        </article>
+          </article>
 
-        <article class="panel panel-wide">
-          <div class="panel-head">
-            <h2 data-i18n="section4_title">4. 资源状态监控</h2>
-            <p data-i18n="section4_desc">水位、粮食余量、藏粮热点和磨牙损耗</p>
-          </div>
-          <div class="chart-grid chart-grid-2">
-            <div class="chart-box">
-              <h3 data-i18n="chart_resource">水位 / 食量趋势</h3>
-              <div id="chart-resource" class="chart"></div>
+          <article class="panel panel-wide">
+            <div class="panel-head">
+              <h2 data-i18n="section2_title">2. 空间活跃度与领地分析</h2>
+              <p data-i18n="section2_desc">热力图、巡逻路径、区域停留占比与越界检测</p>
             </div>
-            <div class="chart-box">
-              <h3 data-i18n="chart_gnaw">磨牙损耗趋势</h3>
-              <div id="chart-gnaw" class="chart"></div>
+            <div class="chart-grid chart-grid-2">
+              <div class="chart-box">
+                <h3 data-i18n="chart_heatmap">24h 活动热力图</h3>
+                <div id="chart-heatmap" class="chart"></div>
+              </div>
+              <div class="chart-box">
+                <h3 data-i18n="chart_trajectory">巡逻轨迹</h3>
+                <div id="chart-trajectory" class="chart"></div>
+              </div>
+              <div class="chart-box">
+                <h3 data-i18n="chart_zone_dwell">区域停留占比</h3>
+                <div id="chart-zone-dwell" class="chart"></div>
+              </div>
+              <div class="chart-box">
+                <h3 data-i18n="chart_escape">越界时间线</h3>
+                <div id="chart-escape" class="chart"></div>
+              </div>
             </div>
-            <div class="chart-box">
-              <h3 data-i18n="chart_hoard">藏粮热点</h3>
-              <div id="chart-hoard" class="chart"></div>
-            </div>
-          </div>
-        </article>
+          </article>
 
-        <article class="panel panel-wide">
-          <div class="panel-head">
-            <h2 data-i18n="section5_title">5. 行为习性与作息统计</h2>
-            <p data-i18n="section5_desc">起居规律、洗脸频率、刻板行为与挖掘时长</p>
-          </div>
-          <div class="chart-grid chart-grid-2">
-            <div class="chart-box">
-              <h3 data-i18n="chart_behavior_hourly">每小时洗脸 / 挖掘</h3>
-              <div id="chart-behavior-hourly" class="chart"></div>
+          <article class="panel panel-wide">
+            <div class="panel-head">
+              <h2 data-i18n="section3_title">3. 基于 VLM 的生理健康扫描</h2>
+              <p data-i18n="section3_desc">毛发、神态、体型变化与步态对称性</p>
             </div>
-            <div class="chart-box">
-              <h3 data-i18n="chart_anxiety">焦虑 / 刻板行为指数</h3>
-              <div id="chart-anxiety" class="chart"></div>
+            <div class="chart-grid chart-grid-2">
+              <div class="chart-box">
+                <h3 data-i18n="chart_health_radar">最新健康雷达图</h3>
+                <div id="chart-health-radar" class="chart"></div>
+              </div>
+              <div class="chart-box">
+                <h3 data-i18n="chart_health_trend">健康扫描趋势</h3>
+                <div id="chart-health-trend" class="chart"></div>
+              </div>
             </div>
-            <div class="chart-box schedule-box">
-              <h3 data-i18n="chart_schedule">每日作息快照</h3>
-              <div id="schedule-card" class="schedule-card"></div>
-            </div>
-          </div>
-        </article>
+          </article>
 
-        <article class="panel panel-wide">
-          <div class="panel-head">
-            <h2 data-i18n="section6_title">6. 生活环境与运动触发拍摄</h2>
-            <p data-i18n="section6_desc">光照、清洁、垫料舒适度与画面变动触发录制</p>
-          </div>
-          <div class="chart-grid chart-grid-2">
-            <div class="chart-box">
-              <h3 data-i18n="chart_env_comfort">环境舒适度趋势</h3>
-              <div id="chart-env-comfort" class="chart"></div>
+          <article class="panel panel-wide">
+            <div class="panel-head">
+              <h2 data-i18n="section4_title">4. 资源状态监控</h2>
+              <p data-i18n="section4_desc">水位、粮食余量、藏粮热点和磨牙损耗</p>
             </div>
-            <div class="chart-box">
-              <h3 data-i18n="chart_env_factors">环境因子分项</h3>
-              <div id="chart-env-factors" class="chart"></div>
+            <div class="chart-grid chart-grid-2">
+              <div class="chart-box">
+                <h3 data-i18n="chart_resource">水位 / 食量趋势</h3>
+                <div id="chart-resource" class="chart"></div>
+              </div>
+              <div class="chart-box">
+                <h3 data-i18n="chart_gnaw">磨牙损耗趋势</h3>
+                <div id="chart-gnaw" class="chart"></div>
+              </div>
+              <div class="chart-box">
+                <h3 data-i18n="chart_hoard">藏粮热点</h3>
+                <div id="chart-hoard" class="chart"></div>
+              </div>
             </div>
-            <div class="chart-box">
-              <h3 data-i18n="chart_motion">运动比率与录制状态</h3>
-              <div id="chart-motion" class="chart"></div>
-            </div>
-            <div class="chart-box">
-              <h3 data-i18n="chart_segments">录制片段</h3>
-              <div id="capture-segments" class="segment-list"></div>
-            </div>
-          </div>
-        </article>
+          </article>
 
-        <article class="panel">
+          <article class="panel panel-wide">
+            <div class="panel-head">
+              <h2 data-i18n="section5_title">5. 行为习性与作息统计</h2>
+              <p data-i18n="section5_desc">起居规律、洗脸频率、刻板行为与挖掘时长</p>
+            </div>
+            <div class="chart-grid chart-grid-2">
+              <div class="chart-box">
+                <h3 data-i18n="chart_behavior_hourly">每小时洗脸 / 挖掘</h3>
+                <div id="chart-behavior-hourly" class="chart"></div>
+              </div>
+              <div class="chart-box">
+                <h3 data-i18n="chart_anxiety">焦虑 / 刻板行为指数</h3>
+                <div id="chart-anxiety" class="chart"></div>
+              </div>
+              <div class="chart-box schedule-box">
+                <h3 data-i18n="chart_schedule">每日作息快照</h3>
+                <div id="schedule-card" class="schedule-card"></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel panel-wide">
+            <div class="panel-head">
+              <h2 data-i18n="section6_title">6. 生活环境与运动触发拍摄</h2>
+              <p data-i18n="section6_desc">光照、清洁、垫料舒适度与画面变动触发录制</p>
+            </div>
+            <div class="chart-grid chart-grid-2">
+              <div class="chart-box">
+                <h3 data-i18n="chart_env_comfort">环境舒适度趋势</h3>
+                <div id="chart-env-comfort" class="chart"></div>
+              </div>
+              <div class="chart-box">
+                <h3 data-i18n="chart_env_factors">环境因子分项</h3>
+                <div id="chart-env-factors" class="chart"></div>
+              </div>
+              <div class="chart-box">
+                <h3 data-i18n="chart_motion">运动比率与录制状态</h3>
+                <div id="chart-motion" class="chart"></div>
+              </div>
+              <div class="chart-box">
+                <h3 data-i18n="chart_segments">录制片段</h3>
+                <div id="capture-segments" class="segment-list"></div>
+              </div>
+            </div>
+          </article>
+        </section>
+      </section>
+
+      <section id="tab-panel-live" class="tab-panel" data-tab-panel="live" role="tabpanel" aria-labelledby="tab-live">
+        <article class="panel panel-live-reserved">
           <div class="panel-head">
-            <h2 data-i18n="alerts_title">告警流</h2>
-            <p data-i18n="alerts_desc">来自越界、健康、补给与环境规则的实时告警</p>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th data-i18n="table_time">时间</th>
-                  <th data-i18n="table_severity">等级</th>
-                  <th data-i18n="table_type">类型</th>
-                  <th data-i18n="table_message">内容</th>
-                </tr>
-              </thead>
-              <tbody id="alerts-table"></tbody>
-            </table>
+            <h2 data-i18n="tab_live_title">实时监控（预留）</h2>
+            <p data-i18n="tab_live_desc">该模块暂未接入，后续会开放实时视频流与事件看板。</p>
           </div>
         </article>
       </section>
@@ -281,6 +335,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-    <script src="/web/app.js?v=20260217g" type="module"></script>
+    <script src="/web/app.js?v=20260217i" type="module"></script>
   </body>
 </html>
