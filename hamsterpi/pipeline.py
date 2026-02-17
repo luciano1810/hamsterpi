@@ -137,6 +137,124 @@ class HamsterVisionPipeline:
         return ordered
 
     @staticmethod
+    def _quad_is_valid(quad: np.ndarray) -> bool:
+        if quad.shape != (4, 2):
+            return False
+        if not np.isfinite(quad).all():
+            return False
+        ordered = HamsterVisionPipeline._order_quad(quad.astype(np.float32))
+        unique = np.unique(ordered.round(decimals=2), axis=0)
+        if unique.shape[0] < 4:
+            return False
+        return abs(cv2.contourArea(ordered.astype(np.float32))) >= 20.0
+
+    @staticmethod
+    def _quad_boundary_error(quad: np.ndarray, boundary: np.ndarray) -> float:
+        if not HamsterVisionPipeline._quad_is_valid(quad):
+            return float("inf")
+
+        src_quad = HamsterVisionPipeline._order_quad(quad.astype(np.float32))
+        dst_quad = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [1.0, 1.0],
+                [0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        homography = cv2.getPerspectiveTransform(src_quad, dst_quad)
+        if not np.isfinite(homography).all():
+            return float("inf")
+        if abs(np.linalg.det(homography)) < 1e-9:
+            return float("inf")
+
+        src = boundary.astype(np.float32).reshape(-1, 1, 2)
+        projected = cv2.perspectiveTransform(src, homography).reshape(-1, 2)
+        if projected.shape[0] == 0 or not np.isfinite(projected).all():
+            return float("inf")
+
+        x = projected[:, 0]
+        y = projected[:, 1]
+        edge_distance = np.minimum.reduce([np.abs(x), np.abs(1.0 - x), np.abs(y), np.abs(1.0 - y)])
+        outside_penalty = (
+            np.maximum(0.0, -x)
+            + np.maximum(0.0, x - 1.0)
+            + np.maximum(0.0, -y)
+            + np.maximum(0.0, y - 1.0)
+        )
+        # Blend average and tail error; heavily penalize boundary points outside the target rectangle.
+        return float(np.mean(edge_distance) + np.percentile(edge_distance, 75) + np.mean(outside_penalty) * 2.5)
+
+    @staticmethod
+    def _quad_corner_anchor_error(quad: np.ndarray, boundary: np.ndarray) -> float:
+        if not HamsterVisionPipeline._quad_is_valid(quad):
+            return float("inf")
+        if boundary.shape[0] < 3:
+            return 0.0
+
+        contour = boundary.astype(np.float32).reshape(-1, 1, 2)
+        span = np.ptp(boundary.astype(np.float32), axis=0)
+        norm = max(float(np.linalg.norm(span)), 1e-6)
+
+        ordered = HamsterVisionPipeline._order_quad(quad.astype(np.float32))
+        distances: List[float] = []
+        for x, y in ordered:
+            dist = cv2.pointPolygonTest(contour, (float(x), float(y)), True)
+            distances.append(abs(float(dist)) / norm)
+        return float(np.mean(distances))
+
+    @staticmethod
+    def _quad_perspective_ratio_error(quad: np.ndarray, boundary: np.ndarray) -> float:
+        if not HamsterVisionPipeline._quad_is_valid(quad):
+            return float("inf")
+        if boundary.shape[0] < 4:
+            return 0.0
+
+        ordered = HamsterVisionPipeline._order_quad(quad.astype(np.float32))
+        top_len = float(np.linalg.norm(ordered[1] - ordered[0]))
+        bottom_len = float(np.linalg.norm(ordered[2] - ordered[3]))
+        if top_len < 1e-6 or bottom_len < 1e-6:
+            return float("inf")
+        candidate_ratio = top_len / max(bottom_len, 1e-6)
+
+        y_min = float(np.min(boundary[:, 1]))
+        y_max = float(np.max(boundary[:, 1]))
+        y_span = y_max - y_min
+        if y_span < 1e-3:
+            return 0.0
+
+        band = max(2.0, y_span * 0.30)
+        top_points = boundary[boundary[:, 1] <= y_min + band]
+        bottom_points = boundary[boundary[:, 1] >= y_max - band]
+        if top_points.shape[0] < 2 or bottom_points.shape[0] < 2:
+            return 0.0
+
+        top_width = float(np.max(top_points[:, 0]) - np.min(top_points[:, 0]))
+        bottom_width = float(np.max(bottom_points[:, 0]) - np.min(bottom_points[:, 0]))
+        if top_width < 1e-3 or bottom_width < 1e-3:
+            return 0.0
+        expected_ratio = top_width / max(bottom_width, 1e-6)
+
+        # Compare in log domain to treat expansion/shrinkage symmetrically.
+        return abs(float(np.log((candidate_ratio + 1e-4) / (expected_ratio + 1e-4))))
+
+    @staticmethod
+    def _quad_selection_error(quad: np.ndarray, boundary: np.ndarray) -> float:
+        boundary_error = HamsterVisionPipeline._quad_boundary_error(quad, boundary)
+        if not np.isfinite(boundary_error):
+            return float("inf")
+
+        corner_error = HamsterVisionPipeline._quad_corner_anchor_error(quad, boundary)
+        ratio_error = HamsterVisionPipeline._quad_perspective_ratio_error(quad, boundary)
+        if not np.isfinite(corner_error) or not np.isfinite(ratio_error):
+            return float("inf")
+
+        # Encourage perspective-consistent quads: corners should stay close to drawn fence edges,
+        # and top/bottom width ratio should match camera tilt implied by fence points.
+        return float(boundary_error + corner_error * 2.0 + ratio_error * 0.45)
+
+    @staticmethod
     def _top_bottom_lr_quad(points: np.ndarray) -> Optional[np.ndarray]:
         if points.shape[0] < 4:
             return None
@@ -162,33 +280,70 @@ class HamsterVisionPipeline:
         bottom_right = bottom_candidates[np.argmax(bottom_candidates[:, 0])]
 
         quad = np.array([top_left, top_right, bottom_right, bottom_left], dtype=np.float32)
-
-        # Degenerate selection (e.g., same point picked twice) should fallback.
-        unique = np.unique(quad.round(decimals=2), axis=0)
-        if unique.shape[0] < 4:
+        ordered = HamsterVisionPipeline._order_quad(quad)
+        if not HamsterVisionPipeline._quad_is_valid(ordered):
             return None
-
-        if abs(cv2.contourArea(quad.astype(np.float32))) < 20.0:
-            return None
-        return quad
+        return ordered
 
     def _polygon_to_quad(self, polygon: Sequence[Sequence[int]]) -> Optional[np.ndarray]:
         if len(polygon) < 3:
             return None
         pts = np.array(polygon, dtype=np.float32)
-
-        hull = cv2.convexHull(pts).reshape(-1, 2)
-        candidate = self._top_bottom_lr_quad(hull if hull.shape[0] >= 4 else pts)
-        if candidate is not None:
-            return candidate
-
-        # Fallback: keep previous ordering strategy from rectangle approximation.
-        rect = cv2.minAreaRect(pts)
-        quad = cv2.boxPoints(rect)
-        ordered = self._order_quad(np.array(quad, dtype=np.float32))
-        if abs(cv2.contourArea(ordered.astype(np.float32))) < 20.0:
+        if pts.ndim != 2 or pts.shape[1] != 2:
             return None
-        return ordered
+
+        hull = cv2.convexHull(pts).reshape(-1, 2) if pts.shape[0] >= 3 else pts
+        boundary = hull if hull.shape[0] >= 4 else pts
+        if boundary.shape[0] < 4:
+            return None
+
+        candidates: List[np.ndarray] = []
+        seen: set[Tuple[float, ...]] = set()
+
+        def push(candidate: Optional[np.ndarray]) -> None:
+            if candidate is None:
+                return
+            ordered = self._order_quad(np.array(candidate, dtype=np.float32))
+            if not self._quad_is_valid(ordered):
+                return
+            key = tuple(np.round(ordered.reshape(-1), 1).tolist())
+            if key in seen:
+                return
+            seen.add(key)
+            candidates.append(ordered)
+
+        push(self._top_bottom_lr_quad(boundary))
+        if boundary.shape[0] == 4:
+            push(boundary)
+
+        perimeter = float(cv2.arcLength(boundary.reshape(-1, 1, 2), True))
+        if perimeter > 1e-6:
+            for ratio in np.linspace(0.01, 0.14, 16):
+                approx = cv2.approxPolyDP(boundary.reshape(-1, 1, 2), perimeter * float(ratio), True).reshape(-1, 2)
+                if approx.shape[0] == 4:
+                    push(approx)
+
+        sums = boundary.sum(axis=1)
+        diffs = np.diff(boundary, axis=1).reshape(-1)
+        push(
+            np.array(
+                [
+                    boundary[np.argmin(sums)],
+                    boundary[np.argmin(diffs)],
+                    boundary[np.argmax(sums)],
+                    boundary[np.argmax(diffs)],
+                ],
+                dtype=np.float32,
+            )
+        )
+
+        rect = cv2.minAreaRect(boundary)
+        push(cv2.boxPoints(rect))
+
+        if not candidates:
+            return None
+
+        return min(candidates, key=lambda quad: self._quad_selection_error(quad, boundary))
 
     def _transform_polygon(self, polygon: Sequence[Sequence[int]], matrix: np.ndarray) -> List[Tuple[int, int]]:
         if len(polygon) < 3:
@@ -228,9 +383,7 @@ class HamsterVisionPipeline:
         if abs(np.linalg.det(homography)) < 1e-9:
             return None, scaled_fence, scaled_zones
 
-        bev_fence = self._transform_polygon(scaled_fence, homography)
-        if len(bev_fence) < 3:
-            return None, scaled_fence, scaled_zones
+        bev_fence = [(int(round(x)), int(round(y))) for x, y in dst_quad]
 
         bev_zones: Dict[str, List[Tuple[int, int]]] = {}
         for name, polygon in scaled_zones.items():

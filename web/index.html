@@ -281,8 +281,31 @@
         </p>
 
         <div class="init-layout">
-          <div class="init-canvas-wrap">
-            <canvas id="init-canvas"></canvas>
+          <div class="init-preview-stack">
+            <div class="init-canvas-wrap">
+              <canvas id="init-canvas"></canvas>
+            </div>
+            <section id="init-map-compare" class="init-map-compare hidden">
+              <div class="init-map-head">
+                <h3 data-i18n="init_map_title">圈区映射预览</h3>
+                <p class="init-map-desc" data-i18n="init_map_desc">用于快速核对映射前后区域形变是否合理。</p>
+              </div>
+              <div class="init-map-grid">
+                <figure class="init-map-card">
+                  <figcaption data-i18n="init_map_before">映射前（相机平面）</figcaption>
+                  <div class="init-map-canvas-wrap">
+                    <canvas id="init-map-before-canvas"></canvas>
+                  </div>
+                </figure>
+                <figure class="init-map-card">
+                  <figcaption data-i18n="init_map_after">映射后（长方形平面）</figcaption>
+                  <div class="init-map-canvas-wrap">
+                    <canvas id="init-map-after-canvas"></canvas>
+                  </div>
+                </figure>
+              </div>
+              <p id="init-map-status" class="modal-sub"></p>
+            </section>
           </div>
           <div class="init-controls">
             <div class="init-step-card">
@@ -355,6 +378,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-    <script src="/web/app.js?v=20260218r1" type="module"></script>
+    <script src="/web/app.js?v=20260218r2" type="module"></script>
   </body>
 </html>

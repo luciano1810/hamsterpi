@@ -658,6 +658,12 @@ html[data-theme="light"] .badge.low {
   gap: 10px;
 }
 
+.init-preview-stack {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
 .init-canvas-wrap {
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -681,6 +687,64 @@ html[data-theme="light"] .badge.low {
   border-radius: 8px;
   cursor: crosshair;
   background: #0f2030;
+}
+
+.init-map-compare {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px;
+  background: var(--surface-soft);
+  display: grid;
+  gap: 8px;
+}
+
+.init-map-head h3 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.init-map-desc {
+  margin: 3px 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.init-map-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.init-map-card {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.init-map-card figcaption {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--text-soft);
+}
+
+.init-map-canvas-wrap {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0f2030;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 120px;
+  overflow: hidden;
+}
+
+#init-map-before-canvas,
+#init-map-after-canvas {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  border-radius: 6px;
 }
 
 .init-controls {
@@ -942,6 +1006,10 @@ html[data-theme="light"] .badge.low {
 
   .init-layout,
   .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .init-map-grid {
     grid-template-columns: 1fr;
   }
 

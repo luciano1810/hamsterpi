@@ -7,7 +7,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -88,6 +88,16 @@ class InitZonesPayload(BaseModel):
     wheel_roi: Optional[List[int]] = None
     inventory_rois: Optional[Dict[str, List[int]]] = None
     bedding_roi: Optional[List[int]] = None
+
+
+class InitMappingPreviewPayload(BaseModel):
+    fence_polygon: List[List[int]] = Field(default_factory=list)
+    wheel_mask_polygon: List[List[int]] = Field(default_factory=list)
+    zones: Dict[str, List[List[int]]] = Field(default_factory=dict)
+    frame_width: Optional[int] = Field(default=None, ge=1)
+    frame_height: Optional[int] = Field(default=None, ge=1)
+    source: str = Field(default="auto", pattern="^(auto|uploaded|config)$")
+    preview_token: str = Field(default="", max_length=120)
 
 
 class RawConfigPayload(BaseModel):
@@ -728,6 +738,8 @@ class DashboardState:
         self._featured_feedback_bad: List[np.ndarray] = []
         self._featured_feedback_blocked_ids: set[str] = set()
         self._featured_feedback_history: List[Dict[str, str]] = []
+        self.init_preview_frame: Optional[np.ndarray] = None
+        self.init_preview_token: str = ""
 
     def _reset_featured_feedback_state(self) -> None:
         self.uploaded_featured_candidates = []
@@ -1198,6 +1210,156 @@ def _image_to_base64_jpeg(frame: np.ndarray) -> str:
     return base64.b64encode(encoded.tobytes()).decode("ascii")
 
 
+def _normalize_init_polygon(points: Sequence[Sequence[int]]) -> List[Tuple[int, int]]:
+    out: List[Tuple[int, int]] = []
+    for point in points:
+        if len(point) != 2:
+            continue
+        try:
+            x = float(point[0])
+            y = float(point[1])
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(x) or not np.isfinite(y):
+            continue
+        out.append((int(round(x)), int(round(y))))
+    return out
+
+
+def _project_polygon(
+    polygon: Sequence[Tuple[int, int]],
+    matrix: np.ndarray,
+    frame_width: int,
+    frame_height: int,
+) -> List[List[int]]:
+    if len(polygon) < 3:
+        return []
+    src = np.array(polygon, dtype=np.float32).reshape(-1, 1, 2)
+    projected = cv2.perspectiveTransform(src, matrix).reshape(-1, 2)
+
+    out: List[List[int]] = []
+    seen: set[Tuple[int, int]] = set()
+    for x, y in projected:
+        px = int(round(np.clip(float(x), 0, frame_width - 1)))
+        py = int(round(np.clip(float(y), 0, frame_height - 1)))
+        key = (px, py)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append([px, py])
+    return out
+
+
+def _build_init_mapping_preview(
+    cfg: SystemConfig,
+    payload: InitMappingPreviewPayload,
+    frame: Optional[np.ndarray] = None,
+) -> Dict[str, Any]:
+    frame_width = int(payload.frame_width or (frame.shape[1] if frame is not None else 0) or cfg.spatial.frame_width or cfg.video.frame_width)
+    frame_height = int(payload.frame_height or (frame.shape[0] if frame is not None else 0) or cfg.spatial.frame_height or cfg.video.frame_height)
+    frame_width = max(64, min(frame_width, 4096))
+    frame_height = max(64, min(frame_height, 4096))
+
+    frame_for_warp: Optional[np.ndarray] = None
+    if frame is not None and frame.size > 0:
+        frame_for_warp = frame
+        if frame_for_warp.shape[1] != frame_width or frame_for_warp.shape[0] != frame_height:
+            frame_for_warp = cv2.resize(frame_for_warp, (frame_width, frame_height), interpolation=cv2.INTER_AREA)
+
+    fence_polygon = _normalize_init_polygon(payload.fence_polygon)
+    wheel_polygon = _normalize_init_polygon(payload.wheel_mask_polygon)
+    zone_polygons = {
+        str(name): _normalize_init_polygon(points)
+        for name, points in (payload.zones or {}).items()
+    }
+
+    mapped_zones: Dict[str, List[List[int]]] = {name: [] for name in zone_polygons.keys()}
+    disabled_payload: Dict[str, Any] = {
+        "enabled": False,
+        "reason": "",
+        "width": frame_width,
+        "height": frame_height,
+        "source_quad": [],
+        "boundary_error": None,
+        "image_b64": "",
+        "source_frame_available": bool(frame_for_warp is not None),
+        "mapped": {
+            "fence_polygon": [],
+            "wheel_mask_polygon": [],
+            "zones": mapped_zones,
+        },
+    }
+
+    if len(fence_polygon) < 4:
+        disabled_payload["reason"] = "fence polygon needs at least 4 valid points"
+        return disabled_payload
+
+    helper = HamsterVisionPipeline.__new__(HamsterVisionPipeline)
+    helper.analysis_width = frame_width
+    helper.analysis_height = frame_height
+    src_quad = HamsterVisionPipeline._polygon_to_quad(helper, fence_polygon)
+    if src_quad is None:
+        disabled_payload["reason"] = "failed to derive stable quad from fence polygon"
+        return disabled_payload
+
+    dst_quad = np.array(
+        [
+            [0.0, 0.0],
+            [float(frame_width - 1), 0.0],
+            [float(frame_width - 1), float(frame_height - 1)],
+            [0.0, float(frame_height - 1)],
+        ],
+        dtype=np.float32,
+    )
+    homography = cv2.getPerspectiveTransform(src_quad.astype(np.float32), dst_quad)
+    if not np.isfinite(homography).all() or abs(np.linalg.det(homography)) < 1e-9:
+        disabled_payload["reason"] = "homography is degenerate"
+        return disabled_payload
+
+    mapped_wheel = _project_polygon(wheel_polygon, homography, frame_width, frame_height)
+    for name, polygon in zone_polygons.items():
+        mapped_zones[name] = _project_polygon(polygon, homography, frame_width, frame_height)
+
+    boundary_arr = cv2.convexHull(np.array(fence_polygon, dtype=np.float32)).reshape(-1, 2)
+    boundary_error = float(HamsterVisionPipeline._quad_boundary_error(src_quad, boundary_arr))
+    if not np.isfinite(boundary_error):
+        boundary_error = None
+
+    source_quad = [[round(float(x), 3), round(float(y), 3)] for x, y in src_quad.tolist()]
+    mapped_fence = [
+        [0, 0],
+        [frame_width - 1, 0],
+        [frame_width - 1, frame_height - 1],
+        [0, frame_height - 1],
+    ]
+    warped_b64 = ""
+    if frame_for_warp is not None:
+        warped = cv2.warpPerspective(
+            frame_for_warp,
+            homography,
+            (frame_width, frame_height),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REPLICATE,
+        )
+        warped_b64 = _image_to_base64_jpeg(warped)
+
+    return {
+        "enabled": True,
+        "reason": "",
+        "width": frame_width,
+        "height": frame_height,
+        "source_quad": source_quad,
+        "boundary_error": boundary_error,
+        "image_b64": warped_b64,
+        "source_frame_available": bool(frame_for_warp is not None),
+        "mapped": {
+            "fence_polygon": mapped_fence,
+            "wheel_mask_polygon": mapped_wheel,
+            "zones": mapped_zones,
+        },
+    }
+
+
 def _public_config(cfg: SystemConfig) -> Dict[str, Any]:
     return {
         "app": cfg.app.model_dump(),
@@ -1562,9 +1724,13 @@ def get_init_frame(
             preferred_video_path=preferred_video_path,
             preferred_preview_path=preferred_preview_path,
         )
+        preview_token = f"init_{int(time.time() * 1000)}_{int(frame.shape[1])}x{int(frame.shape[0])}"
+        dashboard_state.init_preview_frame = frame.copy()
+        dashboard_state.init_preview_token = preview_token
         return {
             "source": source_type,
             "requested_source": source,
+            "preview_token": preview_token,
             "zone_required": dashboard_state.uploaded_zone_required,
             "width": int(frame.shape[1]),
             "height": int(frame.shape[0]),
@@ -1582,6 +1748,41 @@ def get_init_frame(
             },
             "bedding_roi": cfg.environment.bedding_roi,
         }
+
+
+@app.post("/api/init/mapping-preview")
+def get_init_mapping_preview(payload: InitMappingPreviewPayload) -> Dict[str, Any]:
+    with dashboard_state.lock:
+        cfg = dashboard_state.config
+        frame: Optional[np.ndarray] = None
+        if (
+            payload.preview_token
+            and payload.preview_token == dashboard_state.init_preview_token
+            and dashboard_state.init_preview_frame is not None
+        ):
+            frame = dashboard_state.init_preview_frame.copy()
+        else:
+            preferred_video_path: Optional[Path] = None
+            preferred_preview_path: Optional[Path] = None
+            if payload.source == "uploaded":
+                preferred_video_path = dashboard_state.uploaded_video_path
+                preferred_preview_path = dashboard_state.uploaded_preview_path
+            elif payload.source == "auto" and cfg.app.run_mode == "demo" and cfg.app.demo_source == "uploaded_video":
+                preferred_video_path = dashboard_state.uploaded_video_path
+                preferred_preview_path = dashboard_state.uploaded_preview_path
+            frame, _ = _load_preview_frame(
+                cfg,
+                max_width=0,
+                preferred_video_path=preferred_video_path,
+                preferred_preview_path=preferred_preview_path,
+            )
+
+        if cfg.app.run_mode != "demo":
+            preview = _build_init_mapping_preview(cfg, payload, frame=frame)
+            preview["enabled"] = False
+            preview["reason"] = "mapping preview is available in demo mode only"
+            return preview
+        return _build_init_mapping_preview(cfg, payload, frame=frame)
 
 
 @app.post("/api/init/zones")

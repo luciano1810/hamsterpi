@@ -141,6 +141,15 @@ const I18N = {
     init_step_sand_desc: "用于挖掘行为分析",
     init_step_hideout: "躲避窝区域",
     init_step_hideout_desc: "用于起床/入睡判断",
+    init_map_title: "圈区映射预览",
+    init_map_desc: "用于快速核对映射前后区域形变是否合理。",
+    init_map_before: "映射前（相机平面）",
+    init_map_after: "映射后（长方形平面）",
+    init_map_status_loading: "正在计算映射预览...",
+    init_map_status_ready: "映射预览已更新，边界误差：{error}",
+    init_map_status_pending: "围栏点位不足或未闭合，暂无法生成映射预览。",
+    init_map_status_unavailable: "映射预览不可用：{reason}",
+    init_map_status_error: "映射预览失败：{error}",
     settings_title: "系统设置",
     settings_sub: "左侧选择配置分组，右侧编辑具体配置项。",
     settings_section_title: "配置分组",
@@ -431,6 +440,15 @@ const I18N = {
     init_step_sand_desc: "Used for digging analysis",
     init_step_hideout: "Hideout Zone",
     init_step_hideout_desc: "Used for wake/sleep schedule",
+    init_map_title: "Zone Mapping Preview",
+    init_map_desc: "Quickly validate geometric distortion before and after mapping.",
+    init_map_before: "Before (camera plane)",
+    init_map_after: "After (rectified plane)",
+    init_map_status_loading: "Computing mapping preview...",
+    init_map_status_ready: "Mapping preview updated, boundary error: {error}",
+    init_map_status_pending: "Fence points are insufficient or not closed, mapping preview is unavailable.",
+    init_map_status_unavailable: "Mapping preview unavailable: {reason}",
+    init_map_status_error: "Mapping preview failed: {error}",
     settings_title: "System Settings",
     settings_sub: "Choose a config group on the left and edit concrete fields on the right.",
     settings_section_title: "Config Groups",
@@ -839,12 +857,24 @@ const initState = {
   closed: {},
   frameWidth: 0,
   frameHeight: 0,
+  previewToken: "",
+  requestedSource: "auto",
   canvas: null,
   ctx: null,
+  mapBeforeCanvas: null,
+  mapBeforeCtx: null,
+  mapAfterCanvas: null,
+  mapAfterCtx: null,
+  mapAfterImage: null,
+  mapPreviewTimer: 0,
+  mapRequestSeq: 0,
+  mapPreviewData: null,
 };
 
 const INIT_CANVAS_MAX_HEIGHT_RATIO_DESKTOP = 0.72;
 const INIT_CANVAS_MAX_HEIGHT_RATIO_MOBILE = 0.45;
+const INIT_MAP_PREVIEW_MAX_HEIGHT = 180;
+const INIT_MAP_PREVIEW_DEBOUNCE_MS = 160;
 
 let settingsRawConfig = null;
 let settingsWorkingConfig = null;
@@ -1385,6 +1415,10 @@ function setLanguage(language) {
     renderDashboard(lastDashboardData);
   }
   renderInitSteps();
+  updateInitMappingVisibility();
+  drawInitMappingBeforePreview();
+  drawInitMappingAfterPreview();
+  refreshInitMappingStatusText();
 }
 
 function applyStaticI18n() {
@@ -2529,6 +2563,129 @@ function eventToCanvasPoint(event) {
   return [Math.round(x), Math.round(y)];
 }
 
+function loadImageFromDataUrl(dataUrl) {
+  const image = new Image();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback) => {
+      if (settled) return;
+      settled = true;
+      image.onload = null;
+      image.onerror = null;
+      callback();
+    };
+
+    image.onload = () => finish(() => resolve(image));
+    image.onerror = () => finish(() => reject(new Error("image decode failed")));
+    image.src = dataUrl;
+
+    if (image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
+      finish(() => resolve(image));
+    }
+  });
+}
+
+function isInitMappingPreviewEnabled() {
+  return currentRunMode === "demo";
+}
+
+function updateInitMappingVisibility() {
+  const panel = document.getElementById("init-map-compare");
+  if (!panel) {
+    return;
+  }
+  const visible = isInitMappingPreviewEnabled();
+  panel.classList.toggle("hidden", !visible);
+  if (!visible) {
+    clearInitMappingPreviewTimer();
+    return;
+  }
+  if (initState.image) {
+    drawInitMappingBeforePreview();
+    drawInitMappingAfterPreview();
+    refreshInitMappingStatusText();
+  }
+}
+
+function clearInitMappingPreviewTimer() {
+  if (initState.mapPreviewTimer) {
+    window.clearTimeout(initState.mapPreviewTimer);
+    initState.mapPreviewTimer = 0;
+  }
+}
+
+function clonePolygonPoints(points) {
+  if (!Array.isArray(points)) {
+    return [];
+  }
+  const out = [];
+  for (const point of points) {
+    const x = Number(point?.[0]);
+    const y = Number(point?.[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      continue;
+    }
+    out.push([Math.round(x), Math.round(y)]);
+  }
+  return out;
+}
+
+function initMappingPayloadFromState() {
+  return {
+    frame_width: Math.max(1, Math.round(initState.frameWidth || initState.canvas?.width || 0)),
+    frame_height: Math.max(1, Math.round(initState.frameHeight || initState.canvas?.height || 0)),
+    source: initState.requestedSource || "auto",
+    preview_token: initState.previewToken || "",
+    fence_polygon: clonePolygonPoints(initState.polygons.fence_polygon),
+    wheel_mask_polygon: clonePolygonPoints(initState.polygons.wheel_mask_polygon),
+    zones: {
+      food_zone: clonePolygonPoints(initState.polygons.food_zone),
+      sand_bath_zone: clonePolygonPoints(initState.polygons.sand_bath_zone),
+      hideout_zone: clonePolygonPoints(initState.polygons.hideout_zone),
+    },
+  };
+}
+
+function drawPolygonOverlay(
+  ctx,
+  polygons,
+  closed,
+  activeKey,
+  scaleX = 1,
+  scaleY = 1,
+  pointRadius = 3.2
+) {
+  for (const step of INIT_STEPS) {
+    const pts = polygons[step.key] || [];
+    if (pts.length === 0) {
+      continue;
+    }
+
+    const color = STEP_COLORS[step.key] || "#ffffff";
+    ctx.strokeStyle = color;
+    ctx.fillStyle = `${color}33`;
+    ctx.lineWidth = step.key === activeKey ? 2.4 : 1.5;
+
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0] * scaleX, pts[0][1] * scaleY);
+    for (let i = 1; i < pts.length; i += 1) {
+      ctx.lineTo(pts[i][0] * scaleX, pts[i][1] * scaleY);
+    }
+    if (closed?.[step.key]) {
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.stroke();
+
+    for (const [x, y] of pts) {
+      ctx.beginPath();
+      ctx.arc(x * scaleX, y * scaleY, pointRadius, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+    }
+  }
+}
+
 function drawInitCanvas() {
   if (!initState.ctx || !initState.image) {
     return;
@@ -2537,36 +2694,270 @@ function drawInitCanvas() {
   const ctx = initState.ctx;
   ctx.clearRect(0, 0, initState.canvas.width, initState.canvas.height);
   ctx.drawImage(initState.image, 0, 0);
+  drawPolygonOverlay(
+    ctx,
+    initState.polygons,
+    initState.closed,
+    INIT_STEPS[initState.activeIndex]?.key || ""
+  );
+}
 
-  for (const step of INIT_STEPS) {
-    const pts = initState.polygons[step.key] || [];
-    if (pts.length === 0) {
-      continue;
-    }
+function fitCanvasToSource(canvas, sourceWidth, sourceHeight, maxHeight) {
+  const parent = canvas?.parentElement;
+  const availableWidth = Math.max(120, Math.floor((parent?.clientWidth || sourceWidth) - 2));
+  const availableHeight = Math.max(90, maxHeight);
+  const scale = Math.min(availableWidth / sourceWidth, availableHeight / sourceHeight, 1);
+  const drawWidth = Math.max(1, Math.floor(sourceWidth * scale));
+  const drawHeight = Math.max(1, Math.floor(sourceHeight * scale));
+  canvas.width = drawWidth;
+  canvas.height = drawHeight;
+  canvas.style.width = `${drawWidth}px`;
+  canvas.style.height = `${drawHeight}px`;
+  return {
+    drawWidth,
+    drawHeight,
+    scaleX: drawWidth / Math.max(sourceWidth, 1),
+    scaleY: drawHeight / Math.max(sourceHeight, 1),
+  };
+}
 
-    const color = STEP_COLORS[step.key] || "#ffffff";
-    ctx.strokeStyle = color;
-    ctx.fillStyle = `${color}33`;
-    ctx.lineWidth = step.key === INIT_STEPS[initState.activeIndex].key ? 2.6 : 1.6;
+function drawInitMappingBeforePreview() {
+  if (!initState.mapBeforeCanvas || !initState.mapBeforeCtx || !initState.image) {
+    return;
+  }
+  if (!isInitMappingPreviewEnabled()) {
+    return;
+  }
 
+  const canvas = initState.mapBeforeCanvas;
+  const ctx = initState.mapBeforeCtx;
+  const sourceWidth = Math.max(1, initState.image.width || initState.canvas?.width || 1);
+  const sourceHeight = Math.max(1, initState.image.height || initState.canvas?.height || 1);
+  const layout = fitCanvasToSource(canvas, sourceWidth, sourceHeight, INIT_MAP_PREVIEW_MAX_HEIGHT);
+  ctx.clearRect(0, 0, layout.drawWidth, layout.drawHeight);
+  ctx.drawImage(initState.image, 0, 0, layout.drawWidth, layout.drawHeight);
+
+  drawPolygonOverlay(
+    ctx,
+    initState.polygons,
+    initState.closed,
+    INIT_STEPS[initState.activeIndex]?.key || "",
+    layout.scaleX,
+    layout.scaleY,
+    2.1
+  );
+
+  const sourceQuad = initState.mapPreviewData?.source_quad;
+  if (Array.isArray(sourceQuad) && sourceQuad.length === 4) {
+    ctx.save();
+    ctx.strokeStyle = currentTheme === "light" ? "#16335b" : "#d8efff";
+    ctx.lineWidth = 1.3;
+    ctx.setLineDash([6, 4]);
     ctx.beginPath();
-    ctx.moveTo(pts[0][0], pts[0][1]);
-    for (let i = 1; i < pts.length; i += 1) {
-      ctx.lineTo(pts[i][0], pts[i][1]);
+    for (let i = 0; i < sourceQuad.length; i += 1) {
+      const point = sourceQuad[i];
+      const x = Number(point?.[0]) * layout.scaleX;
+      const y = Number(point?.[1]) * layout.scaleY;
+      if (i === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
     }
-    if (initState.closed[step.key]) {
-      ctx.closePath();
-      ctx.fill();
-    }
+    ctx.closePath();
     ctx.stroke();
+    ctx.restore();
+  }
+}
 
-    for (const [x, y] of pts) {
+function drawInitMappingAfterPreview(previewData = initState.mapPreviewData) {
+  if (!initState.mapAfterCanvas || !initState.mapAfterCtx) {
+    return;
+  }
+  if (!isInitMappingPreviewEnabled()) {
+    return;
+  }
+
+  const canvas = initState.mapAfterCanvas;
+  const ctx = initState.mapAfterCtx;
+  const mappedImage = initState.mapAfterImage;
+  const sourceWidth = Math.max(
+    1,
+    Number(mappedImage?.width || 0)
+      || Number(previewData?.width)
+      || initState.canvas?.width
+      || 1
+  );
+  const sourceHeight = Math.max(
+    1,
+    Number(mappedImage?.height || 0)
+      || Number(previewData?.height)
+      || initState.canvas?.height
+      || 1
+  );
+  const layout = fitCanvasToSource(canvas, sourceWidth, sourceHeight, INIT_MAP_PREVIEW_MAX_HEIGHT);
+  ctx.clearRect(0, 0, layout.drawWidth, layout.drawHeight);
+
+  if (mappedImage) {
+    ctx.drawImage(mappedImage, 0, 0, layout.drawWidth, layout.drawHeight);
+  } else {
+    const bg = currentTheme === "light" ? "#e7f0ef" : "#112333";
+    const grid = currentTheme === "light" ? "rgba(41, 83, 103, 0.16)" : "rgba(181, 228, 255, 0.12)";
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, layout.drawWidth, layout.drawHeight);
+    ctx.strokeStyle = grid;
+    ctx.lineWidth = 1;
+    const step = Math.max(18, Math.floor(layout.drawWidth / 12));
+    for (let x = 0; x <= layout.drawWidth; x += step) {
       ctx.beginPath();
-      ctx.arc(x, y, 3.2, 0, Math.PI * 2);
-      ctx.fillStyle = color;
-      ctx.fill();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, layout.drawHeight);
+      ctx.stroke();
+    }
+    for (let y = 0; y <= layout.drawHeight; y += step) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(layout.drawWidth, y);
+      ctx.stroke();
     }
   }
+
+  const mapped = previewData?.mapped || {};
+  const mappedZones = mapped.zones || {};
+  const mappedPolygons = {
+    fence_polygon: mapped.fence_polygon || [],
+    wheel_mask_polygon: mapped.wheel_mask_polygon || [],
+    food_zone: mappedZones.food_zone || [],
+    sand_bath_zone: mappedZones.sand_bath_zone || [],
+    hideout_zone: mappedZones.hideout_zone || [],
+  };
+  const mappedClosed = {};
+  for (const stepItem of INIT_STEPS) {
+    mappedClosed[stepItem.key] = (mappedPolygons[stepItem.key] || []).length >= 3;
+  }
+
+  drawPolygonOverlay(
+    ctx,
+    mappedPolygons,
+    mappedClosed,
+    INIT_STEPS[initState.activeIndex]?.key || "",
+    layout.scaleX,
+    layout.scaleY,
+    2
+  );
+}
+
+function setInitMapStatus(text) {
+  const node = document.getElementById("init-map-status");
+  if (!node) {
+    return;
+  }
+  node.textContent = text;
+}
+
+function refreshInitMappingStatusText() {
+  if (!isInitMappingPreviewEnabled()) {
+    return;
+  }
+  const preview = initState.mapPreviewData;
+  if (preview?.enabled) {
+    const errorValue = Number(preview.boundary_error);
+    const errorText = Number.isFinite(errorValue) ? fmtNumber(errorValue, 4) : "-";
+    setInitMapStatus(formatText("init_map_status_ready", { error: errorText }));
+    return;
+  }
+  if (preview?.reason) {
+    setInitMapStatus(formatText("init_map_status_unavailable", { reason: String(preview.reason) }));
+    return;
+  }
+  setInitMapStatus(t("init_map_status_pending"));
+}
+
+async function loadInitMappingPreview() {
+  if (!isInitMappingPreviewEnabled() || !initState.image) {
+    return;
+  }
+
+  const payload = initMappingPayloadFromState();
+  if ((payload.fence_polygon || []).length < 4) {
+    initState.mapAfterImage = null;
+    initState.mapPreviewData = null;
+    drawInitMappingBeforePreview();
+    drawInitMappingAfterPreview();
+    refreshInitMappingStatusText();
+    return;
+  }
+
+  const requestId = initState.mapRequestSeq + 1;
+  initState.mapRequestSeq = requestId;
+  setInitMapStatus(t("init_map_status_loading"));
+
+  let response;
+  try {
+    response = await fetch("/api/init/mapping-preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    if (requestId !== initState.mapRequestSeq) {
+      return;
+    }
+    setInitMapStatus(formatText("init_map_status_error", { error: String(err) }));
+    return;
+  }
+
+  if (requestId !== initState.mapRequestSeq) {
+    return;
+  }
+
+  if (!response.ok) {
+    const detail = await responseDetailText(response);
+    setInitMapStatus(formatText("init_map_status_error", { error: detail }));
+    return;
+  }
+
+  const preview = await response.json();
+  if (requestId !== initState.mapRequestSeq) {
+    return;
+  }
+
+  let mappedImage = null;
+  const mappedB64 = String(preview?.image_b64 || "");
+  if (mappedB64) {
+    try {
+      mappedImage = await loadImageFromDataUrl(`data:image/jpeg;base64,${mappedB64}`);
+    } catch (_err) {
+      mappedImage = null;
+    }
+    if (requestId !== initState.mapRequestSeq) {
+      return;
+    }
+  }
+
+  initState.mapAfterImage = mappedImage;
+  initState.mapPreviewData = preview;
+  drawInitMappingBeforePreview();
+  drawInitMappingAfterPreview(preview);
+  refreshInitMappingStatusText();
+}
+
+function scheduleInitMappingPreview(immediate = false) {
+  drawInitMappingBeforePreview();
+  drawInitMappingAfterPreview();
+  if (!isInitMappingPreviewEnabled() || !initState.image) {
+    return;
+  }
+
+  clearInitMappingPreviewTimer();
+  if (immediate) {
+    void loadInitMappingPreview();
+    return;
+  }
+  initState.mapPreviewTimer = window.setTimeout(() => {
+    initState.mapPreviewTimer = 0;
+    void loadInitMappingPreview();
+  }, INIT_MAP_PREVIEW_DEBOUNCE_MS);
 }
 
 function layoutInitCanvasDisplay() {
@@ -2591,6 +2982,8 @@ function layoutInitCanvasDisplay() {
   const displayHeight = Math.max(1, Math.floor(imageHeight * scale));
   initState.canvas.style.width = `${displayWidth}px`;
   initState.canvas.style.height = `${displayHeight}px`;
+  drawInitMappingBeforePreview();
+  drawInitMappingAfterPreview();
 }
 
 function renderInitSteps() {
@@ -2617,6 +3010,11 @@ function openModal(id) {
 
 function closeModal(id) {
   document.getElementById(id).classList.add("hidden");
+  if (id === "init-modal") {
+    clearInitMappingPreviewTimer();
+    initState.mapRequestSeq += 1;
+    initState.mapAfterImage = null;
+  }
 }
 
 function sourceLabel(source) {
@@ -2652,33 +3050,15 @@ async function loadInitFrame(source = "auto") {
     throw new Error("init frame response missing image data");
   }
 
-  const image = new Image();
-  const dataUrl = `data:image/jpeg;base64,${payload.image_b64}`;
-  await new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (callback) => {
-      if (settled) return;
-      settled = true;
-      image.onload = null;
-      image.onerror = null;
-      callback();
-    };
-
-    image.onload = () => finish(resolve);
-    image.onerror = () => finish(() => reject(new Error("init frame image decode failed")));
-    image.src = dataUrl;
-
-    // data URL may decode before handlers are observed on slower devices/browsers.
-    if (image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
-      finish(resolve);
-    }
-  });
+  const image = await loadImageFromDataUrl(`data:image/jpeg;base64,${payload.image_b64}`);
 
   initState.image = image;
   initState.canvas.width = image.width;
   initState.canvas.height = image.height;
   initState.frameWidth = Number(payload.width || image.width || 0);
   initState.frameHeight = Number(payload.height || image.height || 0);
+  initState.previewToken = String(payload.preview_token || "");
+  initState.requestedSource = String(payload.requested_source || source || "auto");
 
   const zones = payload.spatial?.zones || {};
   initState.polygons = {
@@ -2695,9 +3075,14 @@ async function loadInitFrame(source = "auto") {
   }
 
   initState.activeIndex = 0;
+  initState.mapAfterImage = null;
+  initState.mapPreviewData = null;
+  initState.mapRequestSeq += 1;
   drawInitCanvas();
   renderInitSteps();
   layoutInitCanvasDisplay();
+  updateInitMappingVisibility();
+  scheduleInitMappingPreview(true);
   window.requestAnimationFrame(() => layoutInitCanvasDisplay());
   document.getElementById("init-status").textContent = formatText("init_status_source", { source: sourceLabel(payload.source) });
 }
@@ -2733,6 +3118,7 @@ function onCanvasClick(event) {
   initState.polygons[key] = [...(initState.polygons[key] || []), point];
   drawInitCanvas();
   renderInitSteps();
+  scheduleInitMappingPreview();
 }
 
 function onCanvasDoubleClick(event) {
@@ -2742,6 +3128,7 @@ function onCanvasDoubleClick(event) {
     initState.closed[key] = true;
     drawInitCanvas();
     renderInitSteps();
+    scheduleInitMappingPreview();
   }
 }
 
@@ -2753,6 +3140,7 @@ function undoPoint() {
   initState.closed[key] = false;
   drawInitCanvas();
   renderInitSteps();
+  scheduleInitMappingPreview();
 }
 
 function clearRegion() {
@@ -2761,6 +3149,7 @@ function clearRegion() {
   initState.closed[key] = false;
   drawInitCanvas();
   renderInitSteps();
+  scheduleInitMappingPreview();
 }
 
 function switchStep(delta) {
@@ -2768,6 +3157,8 @@ function switchStep(delta) {
   initState.activeIndex = next;
   renderInitSteps();
   drawInitCanvas();
+  drawInitMappingBeforePreview();
+  drawInitMappingAfterPreview();
 }
 
 function initPayloadFromState() {
@@ -2849,6 +3240,7 @@ function syncModeFromRaw(raw) {
   currentDemoSource = raw?.app?.demo_source || "virtual";
   updateModeSelectorsLabel();
   updateUploadBlockVisibility();
+  updateInitMappingVisibility();
 }
 
 async function loadDemoStatus() {
@@ -3780,6 +4172,7 @@ function bindEvents() {
     runModeSelect.addEventListener("change", (event) => {
       currentRunMode = event.target.value;
       updateUploadBlockVisibility();
+      updateInitMappingVisibility();
       if (currentRunMode === "real") {
         document.getElementById("settings-status").textContent = t("mode_real_reserved");
       }
@@ -3806,8 +4199,14 @@ function bindEvents() {
 
   initState.canvas = document.getElementById("init-canvas");
   initState.ctx = initState.canvas.getContext("2d");
+  initState.mapBeforeCanvas = document.getElementById("init-map-before-canvas");
+  initState.mapBeforeCtx = initState.mapBeforeCanvas ? initState.mapBeforeCanvas.getContext("2d") : null;
+  initState.mapAfterCanvas = document.getElementById("init-map-after-canvas");
+  initState.mapAfterCtx = initState.mapAfterCanvas ? initState.mapAfterCanvas.getContext("2d") : null;
   initState.canvas.addEventListener("click", onCanvasClick);
   initState.canvas.addEventListener("dblclick", onCanvasDoubleClick);
+  updateInitMappingVisibility();
+  setInitMapStatus(t("init_map_status_pending"));
 
   window.addEventListener("resize", () => {
     resizeCharts();
