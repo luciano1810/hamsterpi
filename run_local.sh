@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-HOST="${HOST:-127.0.0.1}"
+HOST="${HOST:-0.0.0.0}"
 APP_PORT="${APP_PORT:-8000}"
 LOG_PORT="${LOG_PORT:-8002}"
 REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-requirements.txt}"
