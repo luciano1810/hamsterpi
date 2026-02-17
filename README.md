@@ -1,43 +1,45 @@
+[中文版](./README.md) | [English Edition](./README_en.md)
+
 # HamsterPi
 
-HamsterPi is a hamster monitoring stack with Raspberry Pi Zero 2W friendly defaults:
+HamsterPi 是一个专为树莓派（Raspberry Pi Zero 2W）优化的仓鼠监控栈，具有低功耗默认配置：
 
-1. Virtual odometer (speed, distance, direction, run-stop intensity)
-2. Spatial analytics (heatmap, patrol path, zone dwell, escape fence)
-3. Visual health check (VLM-ready scoring + image heuristics)
-4. Inventory watch (water, food, hoard hotspots, gnaw wear)
-5. Behavioral logging (wake/sleep, grooming, stereotypy, digging)
-6. Living environment analysis (lighting, cleanliness, bedding evenness, comfort index)
-7. Motion-triggered capture (record only when scene changes)
+1. **虚拟里程计** (速度、距离、方向、跑停强度)
+2. **空间分析** (热力图、巡逻路径、区域停留、离笼预警)
+3. **视觉健康检查** (支持 VLM 的健康评分 + 图像启发式算法)
+4. **物资监测** (水瓶、食盆、储粮点、磨牙消耗)
+5. **行为日志** (作息规律、理毛、刻板行为、挖掘)
+6. **环境分析** (光照、清洁度、垫料平整度、舒适度指数)
+7. **运动触发捕获** (仅在画面变化时记录，节省存储和 CPU)
 
-## Raspberry Pi Zero 2W Focus
+## 树莓派 Zero 2W 优化
 
-Default config is tuned for 512MB memory:
+默认配置针对 512MB 内存进行了深度调优：
 
 - `runtime.profile: rpi_zero2w`
-- low FPS and frame skipping (`process_every_nth_frame`)
-- reduced analysis resolution (`analysis_scale`, `max_analysis_width/height`)
-- bounded in-memory results (`max_frame_results`)
-- optional VLM disabled automatically in low-memory profile
+- 低 FPS 和跳帧处理 (`process_every_nth_frame`)
+- 降低分析分辨率 (`analysis_scale`, `max_analysis_width/height`)
+- 限制内存中的结果存储 (`max_frame_results`)
+- 在低内存模式下自动禁用可选的 VLM 模块
 
-## Project Layout
+## 项目结构
 
 ```text
-config/config.yaml                   # video path, VLM, runtime, motion trigger, regions
-hamsterpi/config.py                  # typed config loader + save helpers
-hamsterpi/pipeline.py                # low-memory real video pipeline
-hamsterpi/simulator.py               # synthetic 24h telemetry
-hamsterpi/main.py                    # FastAPI APIs + init-zone endpoints
-hamsterpi/log_viewer.py              # FastAPI log console (port 8002)
-hamsterpi/logging_system.py          # graded logging + rotating file parser
-hamsterpi/algorithms/*.py            # all algorithms
-web/index.html                       # dashboard + init-zone modal
-web/app.js                           # charts + zone-drawing logic
-web/styles.css                       # UI style
-web/logs/*                           # log console web UI
+config/config.yaml                   # 视频路径、VLM、运行时、运动触发、区域配置
+hamsterpi/config.py                  # 类型安全配置加载器
+hamsterpi/pipeline.py                # 针对低内存优化的视觉处理流水线
+hamsterpi/simulator.py               # 24小时模拟数据提取器
+hamsterpi/main.py                    # FastAPI 接口 + 区域初始化端点
+hamsterpi/log_viewer.py              # FastAPI 日志控制台 (端口 8002)
+hamsterpi/logging_system.py          # 分级日志 + 滚动文件解析
+hamsterpi/algorithms/*.py            # 所有核心分析算法
+web/index.html                       # 仪表盘 + 区域初始化弹窗
+web/app.js                           # 图表绘制 + 区域选择逻辑
+web/styles.css                       # UI 样式
+web/logs/*                           # 日志控制台前端
 ```
 
-## Quick Start
+## 快速开始
 
 ```bash
 python3 -m venv .venv
@@ -46,128 +48,74 @@ pip install -r requirements.txt
 ./scripts/run_all.sh
 ```
 
-Manual mode (two terminals):
+手动模式 (需开启两个终端):
 
 ```bash
-# Terminal A
+# 终端 A: 主程序
 uvicorn hamsterpi.main:app --host 0.0.0.0 --port 8000
-# Terminal B
+# 终端 B: 日志实时查看
 uvicorn hamsterpi.log_viewer:app --host 0.0.0.0 --port 8002
 ```
 
-Open `http://<pi-ip>:8000`.
-Open `http://<pi-ip>:8002` for log console.
+访问 `http://<pi-ip>:8000` 查看仪表盘。
+访问 `http://<pi-ip>:8002` 查看日志。
 
-## Settings & Language
+## 设置与语言
 
-- Click `设置 / Settings` in the top-right toolbar.
-- Settings panel uses a left-group/right-detail layout (no raw JSON editor).
-- All config groups are editable via field forms and persist to `config/config.yaml`.
-- VLM API config is available under the `VLM API` group (`health.vlm`).
-- UI language is configurable in settings:
-  - default: `zh-CN`
-  - optional: `en-US`
-- Language fields in config:
-  - `frontend.default_language`
-  - `frontend.available_languages`
+- 点击顶部工具栏右侧的 `设置 / Settings`。
+- 设置面板采用左侧分组、右侧详情的布局（非原始 JSON 编辑器）。
+- 所有配置组均可通过表单编辑，并持久化到 `config/config.yaml`。
+- VLM API 配置位于 `VLM API` 分组 (`health.vlm`)。
+- UI 语言可在设置中配置：
+  - 默认：`zh-CN` (简体中文)
+  - 可选：`en-US` (英文)
 
-## Mode Switching
+## 运行模式切换
 
 - `app.run_mode`:
-  - `demo` (default)
-  - `real` (reserved for real camera control)
-- `app.demo_source` (available when `run_mode=demo`):
-  - `virtual` (use synthetic dashboard data)
-  - `uploaded_video` (upload a video and run analysis)
-- `app.demo_upload_dir`: uploaded demo video storage path
+  - `demo` (默认，演示模式)
+  - `real` (预留用于真实摄像头控制)
+- `app.demo_source` (当 `run_mode=demo` 时有效):
+  - `virtual` (使用模拟生成的看板数据)
+  - `uploaded_video` (上传视频文件并进行实时分析)
+- `app.demo_upload_dir`: 上传的演示视频存储路径
 
-In UI settings, you can switch mode directly:
+在 UI 设置中可以直接切换模式：
 
-1. Select `Demo` + `Virtual Data` for synthetic dashboard.
-2. Select `Demo` + `Uploaded Video Analysis`, then:
-   - browser extracts and uploads the original-resolution first frame first (for zone initialization background)
-   - browser compresses video locally first
-   - if browser codec/path is unsupported, fallback uploads original file
-   - uploads compressed video to backend
-   - uploaded demo videos are retained in `app.demo_upload_dir`
-   - you can select previously uploaded videos in Settings to skip compression/upload and jump to zone initialization
-   - after each new upload, initialize zones on uploaded video frame first
-   - click analyze to generate dashboard
-3. Select `Real` to enter reserved mode (camera integration placeholder).
+1. 选择 `Demo` + `Virtual Data` 即可看到模拟数据。
+2. 选择 `Demo` + `Uploaded Video Analysis`：
+   - 浏览器会先提取并上传原图首帧（用于初始化划区背景）。
+   - 浏览器在本地对视频进行压缩。
+   - 如果浏览器不支持该格式/编码，则回退到上传原文件。
+   - 上传完成后，需先在“Initialize Zones”中初始化划区，再点击 Analyze 生成看板。
+3. 选择 `Real` 进入预留模式（摄像头集成占位）。
 
-## First-Time Initialization (圈区)
+## 首次运行初始化 (圈区)
 
-1. Open dashboard and click `Initialize Zones`
-2. Draw polygons for required regions:
-   - `Fence Boundary`
-   - `Wheel Area`
-   - `Food Zone`
-   - `Sand Bath Zone`
-   - `Hideout Zone`
-3. Double-click to close each polygon
-4. Save regions to write `config/config.yaml`
+1. 在看板点击 `Initialize Zones` (初始化区域)
+2. 在画面中绘制所需的区域多边形：
+   - `Fence Boundary` (出笼边界)
+   - `Wheel Area` (跑轮区域)
+   - `Food Zone` (食盆区域)
+   - `Sand Bath Zone` (沙浴区域)
+   - `Hideout Zone` (躲避穴区域)
+3. 双击闭合多边形，完成后点击 Save。
 
-APIs used:
+## 运动触发
 
-- `GET /api/init/frame?source=auto|uploaded|config` preview frame + existing regions
-- `POST /api/init/zones` persist user-defined regions and hot-reload config
-- uploaded preview source priority in uploaded-video mode:
-  1. original first-frame image uploaded via `POST /api/demo/upload-preview`
-  2. fallback to uploaded video frame if preview is unavailable
+配置中的 `motion_trigger` 部分控制场景变化录制：
 
-Note for uploaded-video demo mode:
+- 仅在监控画面发生变化时记录视频或抓拍。
+- 显著降低 RPi 的长时间运行负荷及存储需求。
 
-- `POST /api/demo/upload-preview` uploads full-resolution first frame before video compression/upload
-- `POST /api/demo/upload` marks uploaded video as `zone_required=true`
-- `POST /api/demo/select-uploaded` selects an existing uploaded file and marks `zone_required=true`
-- analysis is blocked until zones are saved once via `POST /api/init/zones`
-- spatial analytics uses BEV-projected coordinates derived from fence polygon; wheel mask remains in original camera plane (not BEV transformed)
+## 分级日志
 
-## Motion Trigger
+- 日志级别：`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`。
+- 日志文件路径：`logging.file_path` (默认：`./logs/hamsterpi.log`)。
+- 支持自动滚动（Rotating）：通过 `max_bytes` 和 `backup_count` 控制。
 
-`motion_trigger` section in config controls scene-change recording:
+## 注意事项
 
-- `min_motion_ratio`
-- `start_trigger_frames`
-- `stop_trigger_frames`
-- `record_video`
-- `output_dir`
-
-Only motion periods are recorded/captured, reducing CPU and storage.
-
-## Main APIs
-
-- `GET /api/config`
-- `GET /api/config/raw`
-- `POST /api/config/raw`
-- `GET /api/demo/status`
-- `POST /api/demo/upload-preview`
-- `POST /api/demo/upload`
-- `POST /api/demo/select-uploaded`
-- `POST /api/demo/analyze-upload`
-- `GET /api/dashboard`
-- `GET /api/dashboard?refresh=true`
-- `POST /api/dashboard/refresh`
-- `GET /api/init/frame`
-- `POST /api/init/zones`
-- `GET /health`
-
-Log console APIs (`8002`):
-
-- `GET /api/logs?levels=INFO,ERROR&q=keyword&limit=500`
-- `GET /health`
-
-## Graded Logging
-
-- Log levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`.
-- Log output is written to `logging.file_path` (default: `./logs/hamsterpi.log`).
-- Rotating file is enabled via:
-  - `logging.max_bytes`
-  - `logging.backup_count`
-- Main app (`8000`) and log console (`8002`) share the same log file.
-
-## Notes
-
-- Synthetic dashboard works without real video.
-- Real-video processing pipeline is in `hamsterpi/pipeline.py`.
-- For real VLM calls, set API key env variable defined by `health.vlm.api_key_env`.
+- **模拟看板**：在没有真实视频时也可以跑通全流程展示。
+- **VLM 系统**：如需使用视觉语言模型分析，请在环境变量中设置 `OPENAI_API_KEY`。
+- **性能限制**：在 RPi Zero 2W 上，建议 FPS 设置在 8-12 之间以获得最佳稳定性。

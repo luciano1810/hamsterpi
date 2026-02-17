@@ -28,6 +28,7 @@ from hamsterpi.config import (
 from hamsterpi.logging_system import configure_logging, get_logger, resolve_log_file
 from hamsterpi.pipeline import HamsterVisionPipeline
 from hamsterpi.simulator import VirtualDatasetGenerator
+from hamsterpi.video_capture import apply_video_orientation, open_video_capture
 
 app = FastAPI(title="HamsterPi Monitoring Demo", version="0.3.0")
 
@@ -870,7 +871,7 @@ def _looks_like_black_frame(frame: np.ndarray) -> bool:
 
 
 def _read_preview_frame(video_path: Path, max_probe_frames: int = 90) -> Optional[np.ndarray]:
-    cap = cv2.VideoCapture(str(video_path))
+    cap, orientation = open_video_capture(video_path)
     best_frame: Optional[np.ndarray] = None
     best_score = -1.0
     probed = 0
@@ -879,6 +880,7 @@ def _read_preview_frame(video_path: Path, max_probe_frames: int = 90) -> Optiona
         ok, raw = cap.read()
         if not ok or raw is None or raw.size == 0:
             break
+        raw = apply_video_orientation(raw, orientation)
         probed += 1
 
         score = _frame_visual_score(raw)
@@ -898,6 +900,7 @@ def _read_preview_frame(video_path: Path, max_probe_frames: int = 90) -> Optiona
             ok, raw = cap.read()
             if not ok or raw is None or raw.size == 0:
                 continue
+            raw = apply_video_orientation(raw, orientation)
             score = _frame_visual_score(raw)
             if score > best_score:
                 best_score = score

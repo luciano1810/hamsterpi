@@ -18,6 +18,7 @@ from hamsterpi.algorithms.visual_health import VisualHealthScanner
 from hamsterpi.config import SystemConfig
 from hamsterpi.logging_system import get_logger
 from hamsterpi.notifier import MacNotifier
+from hamsterpi.video_capture import apply_video_orientation, open_video_capture
 
 LOGGER = get_logger(__name__)
 
@@ -382,7 +383,7 @@ class HamsterVisionPipeline:
             "Pipeline process_video started",
             extra={"context": {"video_path": str(video_path), "max_frames": max_frames}},
         )
-        cap = cv2.VideoCapture(str(video_path))
+        cap, orientation = open_video_capture(video_path)
         if not cap.isOpened():
             LOGGER.error(
                 "Pipeline failed to open video",
@@ -407,6 +408,7 @@ class HamsterVisionPipeline:
                 ok, frame = cap.read()
                 if not ok:
                     break
+                frame = apply_video_orientation(frame, orientation)
 
                 if frame_idx % step != 0:
                     frame_idx += 1
@@ -448,6 +450,9 @@ class HamsterVisionPipeline:
                     "video_path": str(video_path),
                     "source_fps": round(float(fps), 3),
                     "frame_step": step,
+                    "orientation_meta": int(orientation.metadata_angle),
+                    "orientation_auto": bool(orientation.auto_enabled),
+                    "orientation_manual": int(orientation.manual_angle),
                     "processed_count": processed_count,
                     "analyzed_count": analyzed_count,
                     "skipped_count": skipped_count,

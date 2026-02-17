@@ -58,6 +58,7 @@ class SpatialAnalyzer:
         self._bg = cv2.createBackgroundSubtractorMOG2(history=600, varThreshold=32, detectShadows=False)
         self._heatmap = np.zeros((frame_height, frame_width), dtype=np.float32)
         self._previous_centroid: Optional[Point] = None
+        self._previous_camera_centroid: Optional[Point] = None
         self._path_length_pixels = 0.0
         self._zone_dwell_seconds = {zone: 0.0 for zone in zones}
         self._escape_count = 0
@@ -66,6 +67,8 @@ class SpatialAnalyzer:
         self._frames_seen = 0
         self._frames_rejected_high_motion = 0
         self._frames_with_centroid = 0
+        self._missing_centroid_streak = 0
+        self._max_missing_streak = 8
 
         self._fence_mask = np.zeros((frame_height, frame_width), dtype=np.uint8)
         if len(self.fence_polygon) >= 3:
@@ -74,6 +77,11 @@ class SpatialAnalyzer:
             self._fence_mask[:, :] = 255
         self._fence_area_pixels = max(1, int(np.count_nonzero(self._fence_mask)))
         self._max_reliable_motion_ratio = 0.42
+        self._min_candidate_area_pixels = max(28.0, self._fence_area_pixels * 0.00018)
+        self._max_candidate_area_pixels = max(self._min_candidate_area_pixels + 1.0, self._fence_area_pixels * 0.3)
+        self._max_jump_pixels = max(18.0, min(frame_width, frame_height) * 0.22)
+        self._position_smoothing_alpha = 0.58
+        self._min_step_pixels = 1.2
 
         self._motion_fence_mask = np.zeros((frame_height, frame_width), dtype=np.uint8)
         if len(self.motion_fence_polygon) >= 3:
@@ -82,14 +90,9 @@ class SpatialAnalyzer:
             self._motion_fence_mask[:, :] = 255
 
     @staticmethod
-    def _largest_contour(mask: np.ndarray) -> Optional[np.ndarray]:
+    def _find_contours(mask: np.ndarray) -> List[np.ndarray]:
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return None
-        contour = max(contours, key=cv2.contourArea)
-        if cv2.contourArea(contour) < 35:
-            return None
-        return contour
+        return contours or []
 
     @staticmethod
     def _contour_centroid(contour: np.ndarray) -> Optional[Point]:
@@ -122,11 +125,59 @@ class SpatialAnalyzer:
         y = int(round(np.clip(y_f, 0, self.frame_height - 1)))
         return (x, y)
 
+    def _select_contour(self, motion_mask: np.ndarray) -> Tuple[Optional[np.ndarray], Optional[Point]]:
+        contours = self._find_contours(motion_mask)
+        if not contours:
+            return None, None
+
+        candidates: List[Tuple[np.ndarray, Point, float]] = []
+        for contour in contours:
+            area = float(cv2.contourArea(contour))
+            if area < self._min_candidate_area_pixels or area > self._max_candidate_area_pixels:
+                continue
+            centroid = self._contour_centroid(contour)
+            if centroid is None:
+                continue
+            candidates.append((contour, centroid, area))
+
+        if not candidates:
+            return None, None
+
+        if self._previous_camera_centroid is None:
+            contour, centroid, _ = max(candidates, key=lambda item: item[2])
+            return contour, centroid
+
+        prev = np.array(self._previous_camera_centroid, dtype=np.float32)
+        best: Optional[Tuple[np.ndarray, Point, float]] = None
+        best_score = -1.0
+        for contour, centroid, area in candidates:
+            dist = float(np.linalg.norm(np.array(centroid, dtype=np.float32) - prev))
+            if dist > self._max_jump_pixels:
+                continue
+            continuity_score = area / (1.0 + dist)
+            if continuity_score > best_score:
+                best_score = continuity_score
+                best = (contour, centroid, area)
+
+        if best is None:
+            return None, None
+        return best[0], best[1]
+
+    def _smooth_centroid(self, centroid: Point) -> Point:
+        if self._previous_centroid is None:
+            return centroid
+        alpha = self._position_smoothing_alpha
+        px, py = self._previous_centroid
+        x = int(round(px * (1.0 - alpha) + centroid[0] * alpha))
+        y = int(round(py * (1.0 - alpha) + centroid[1] * alpha))
+        return x, y
+
     def _motion_mask(self, frame: np.ndarray) -> np.ndarray:
         fg = self._bg.apply(frame)
         fg = cv2.medianBlur(fg, 5)
         _, fg = cv2.threshold(fg, 190, 255, cv2.THRESH_BINARY)
         fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8), iterations=1)
+        fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8), iterations=1)
         fg = cv2.bitwise_and(fg, self._motion_fence_mask)
         if len(self.wheel_mask_polygon) >= 3:
             cv2.fillPoly(fg, [self.wheel_mask_polygon], 0)
@@ -140,6 +191,10 @@ class SpatialAnalyzer:
 
         if motion_ratio > self._max_reliable_motion_ratio:
             self._frames_rejected_high_motion += 1
+            self._missing_centroid_streak += 1
+            if self._missing_centroid_streak >= self._max_missing_streak:
+                self._previous_centroid = None
+                self._previous_camera_centroid = None
             return SpatialMetrics(
                 timestamp=timestamp.isoformat(),
                 centroid=None,
@@ -149,17 +204,29 @@ class SpatialAnalyzer:
                 active_pixels=active_pixels,
             )
 
-        contour = self._largest_contour(motion)
-        centroid_camera = self._contour_centroid(contour) if contour is not None else None
-        centroid = self._project_point_to_bev(centroid_camera) if centroid_camera is not None else None
+        _, centroid_camera = self._select_contour(motion)
+        centroid_raw = self._project_point_to_bev(centroid_camera) if centroid_camera is not None else None
+        centroid = self._smooth_centroid(centroid_raw) if centroid_raw is not None else None
 
         zone_name: Optional[str] = None
         escape_detected = False
 
         if centroid is not None:
+            self._missing_centroid_streak = 0
             self._frames_with_centroid += 1
+            step_pixels = 0.0
+            dx = 0.0
+            dy = 0.0
+            heading_deg: Optional[float] = None
+            speed_px_s = 0.0
             if self._previous_centroid is not None:
-                self._path_length_pixels += float(np.linalg.norm(np.array(centroid) - np.array(self._previous_centroid)))
+                dx = float(centroid[0] - self._previous_centroid[0])
+                dy = float(centroid[1] - self._previous_centroid[1])
+                step_pixels = float(np.linalg.norm(np.array(centroid, dtype=np.float32) - np.array(self._previous_centroid, dtype=np.float32)))
+                if step_pixels >= self._min_step_pixels:
+                    self._path_length_pixels += step_pixels
+                heading_deg = float((np.degrees(np.arctan2(-dy, dx)) + 360.0) % 360.0) if step_pixels > 0 else None
+                speed_px_s = step_pixels / max(dt_seconds, 1e-3)
 
             zone_name = self._zone_for_point(centroid)
             if zone_name:
@@ -179,10 +246,21 @@ class SpatialAnalyzer:
                     "y": centroid[1],
                     "zone": zone_name,
                     "escape": escape_detected,
+                    "dx": round(dx, 2),
+                    "dy": round(dy, 2),
+                    "step_px": round(step_pixels, 3),
+                    "speed_px_s": round(speed_px_s, 3),
+                    "heading_deg": round(float(heading_deg), 2) if heading_deg is not None else None,
                 }
             )
 
             self._previous_centroid = centroid
+            self._previous_camera_centroid = centroid_camera
+        else:
+            self._missing_centroid_streak += 1
+            if self._missing_centroid_streak >= self._max_missing_streak:
+                self._previous_centroid = None
+                self._previous_camera_centroid = None
 
         return SpatialMetrics(
             timestamp=timestamp.isoformat(),

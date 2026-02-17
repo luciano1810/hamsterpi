@@ -46,6 +46,8 @@ const I18N = {
     btn_auto_off: "自动刷新：关",
     btn_init: "初始化圈区",
     btn_settings: "设置",
+    btn_theme_to_light: "切换到浅色",
+    btn_theme_to_dark: "切换到深色",
     btn_close: "关闭",
     btn_undo: "撤销点位",
     btn_clear: "清空区域",
@@ -176,6 +178,7 @@ const I18N = {
     upload_status_preview_uploading: "正在上传原始首帧...",
     upload_status_preview_ok: "原始首帧上传成功。",
     upload_status_preview_fail: "原始首帧上传失败：{error}。将回退到视频帧。",
+    upload_status_preview_fallback_original: "为保证圈区背景分辨率，改为原视频上传（不压缩）。",
     upload_status_selecting: "正在载入已上传视频...",
     upload_status_selected_need_init: "已载入：{name}。可直接开始圈区初始化。",
     upload_status_select_fail: "载入已上传视频失败：{error}",
@@ -249,6 +252,14 @@ const I18N = {
     legend_bedding: "垫料均匀度",
     legend_motion_ratio: "运动比率",
     legend_capture_active: "录制中",
+    legend_trajectory_path: "巡逻路径",
+    legend_trajectory_direction: "移动方向",
+    legend_trajectory_start: "起点",
+    legend_trajectory_end: "终点",
+    trajectory_time: "时间",
+    trajectory_zone: "区域",
+    trajectory_step: "步进",
+    trajectory_speed: "速度",
     axis_scores: "评分",
     axis_volume: "体型",
     axis_events: "次数",
@@ -298,6 +309,8 @@ const I18N = {
     btn_auto_off: "Auto Refresh: Off",
     btn_init: "Initialize Zones",
     btn_settings: "Settings",
+    btn_theme_to_light: "Switch to Light",
+    btn_theme_to_dark: "Switch to Dark",
     btn_close: "Close",
     btn_undo: "Undo Point",
     btn_clear: "Clear Region",
@@ -428,6 +441,7 @@ const I18N = {
     upload_status_preview_uploading: "Uploading original first frame...",
     upload_status_preview_ok: "Original first frame uploaded.",
     upload_status_preview_fail: "Original first frame upload failed: {error}. Falling back to video frame.",
+    upload_status_preview_fallback_original: "To keep full-resolution zone initialization, upload will fallback to the original video (no compression).",
     upload_status_selecting: "Loading selected uploaded video...",
     upload_status_selected_need_init: "Loaded: {name}. Start zone initialization directly.",
     upload_status_select_fail: "Failed to load uploaded video: {error}",
@@ -501,6 +515,14 @@ const I18N = {
     legend_bedding: "Bedding",
     legend_motion_ratio: "Motion Ratio",
     legend_capture_active: "Capture Active",
+    legend_trajectory_path: "Patrol Path",
+    legend_trajectory_direction: "Direction",
+    legend_trajectory_start: "Start",
+    legend_trajectory_end: "End",
+    trajectory_time: "Time",
+    trajectory_zone: "Zone",
+    trajectory_step: "Step",
+    trajectory_speed: "Speed",
     axis_scores: "scores",
     axis_volume: "volume",
     axis_events: "events",
@@ -544,6 +566,7 @@ const I18N = {
 
 const charts = {};
 const DASHBOARD_TABS = ["overview", "stats", "live"];
+const THEME_STORAGE_KEY = "hamsterpi_theme";
 let autoRefresh = true;
 let refreshTimer = null;
 let currentLanguage = "zh-CN";
@@ -557,6 +580,7 @@ let uploadedVideos = [];
 let uploadedPreviewAvailable = false;
 let uploadedZoneRequired = false;
 let activeDashboardTab = "overview";
+let currentTheme = "dark";
 const CLIENT_VIDEO_COMPRESS = {
   maxWidth: 960,
   maxHeight: 540,
@@ -788,6 +812,79 @@ function escapeHtml(value) {
 function tOrDefault(key, fallback) {
   const value = t(key);
   return value === key ? fallback : value;
+}
+
+function normalizeTheme(theme) {
+  return theme === "light" ? "light" : "dark";
+}
+
+function readStoredTheme() {
+  try {
+    const value = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (value === "dark" || value === "light") {
+      return value;
+    }
+    return null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+function writeStoredTheme(theme) {
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, normalizeTheme(theme));
+  } catch (_err) {
+    // ignore storage write errors
+  }
+}
+
+function detectInitialTheme() {
+  const stored = readStoredTheme();
+  if (stored === "light" || stored === "dark") {
+    return stored;
+  }
+  if (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) {
+    return "light";
+  }
+  return "dark";
+}
+
+function themeToggleText() {
+  return currentTheme === "dark" ? t("btn_theme_to_light") : t("btn_theme_to_dark");
+}
+
+function updateThemeToggleButton() {
+  const themeBtn = document.getElementById("theme-toggle-btn");
+  if (!themeBtn) {
+    return;
+  }
+  const text = themeToggleText();
+  themeBtn.textContent = text;
+  themeBtn.setAttribute("aria-label", text);
+}
+
+function setTheme(theme, persist = true) {
+  currentTheme = normalizeTheme(theme);
+  document.documentElement.setAttribute("data-theme", currentTheme);
+  updateThemeToggleButton();
+  if (persist) {
+    writeStoredTheme(currentTheme);
+  }
+
+  if (!hasChartsInitialized()) {
+    return;
+  }
+
+  if (lastDashboardData) {
+    renderDashboard(lastDashboardData);
+  }
+  window.requestAnimationFrame(() => {
+    resizeCharts();
+  });
+}
+
+function toggleTheme() {
+  setTheme(currentTheme === "dark" ? "light" : "dark", true);
 }
 
 function humanizeKey(key) {
@@ -1230,6 +1327,7 @@ function applyStaticI18n() {
 
   const autoBtn = document.getElementById("toggle-auto-btn");
   autoBtn.textContent = autoRefresh ? t("btn_auto_on") : t("btn_auto_off");
+  updateThemeToggleButton();
   updateModeSelectorsLabel();
   renderSettingsSectionList();
   renderSettingsSectionContent();
@@ -1373,6 +1471,58 @@ function toHour(ts) {
   return `${h}:${m}`;
 }
 
+function zoneLabel(zoneKey) {
+  if (zoneKey === "food_zone") return t("zone_food");
+  if (zoneKey === "sand_bath_zone") return t("zone_sand");
+  if (zoneKey === "hideout_zone") return t("zone_hideout");
+  return zoneKey || "-";
+}
+
+function sampleTrajectory(points, maxPoints = 420) {
+  if (!Array.isArray(points)) {
+    return [];
+  }
+  if (points.length <= maxPoints) {
+    return points.slice();
+  }
+  const sampled = [];
+  const step = (points.length - 1) / Math.max(maxPoints - 1, 1);
+  for (let i = 0; i < maxPoints; i += 1) {
+    const idx = Math.min(points.length - 1, Math.round(i * step));
+    sampled.push(points[idx]);
+  }
+  return sampled;
+}
+
+function buildTrajectorySegments(points) {
+  const segments = [];
+  for (let i = 1; i < points.length; i += 1) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    if (!prev || !curr) {
+      continue;
+    }
+    const dx = curr.x - prev.x;
+    const dy = curr.y - prev.y;
+    const step = Number.isFinite(Number(curr.step_px)) ? Number(curr.step_px) : Math.hypot(dx, dy);
+    if (step < 0.2) {
+      continue;
+    }
+    segments.push({
+      coords: [
+        [prev.x, prev.y],
+        [curr.x, curr.y],
+      ],
+      from: prev.timestamp || "",
+      to: curr.timestamp || "",
+      zone: curr.zone || "",
+      step_px: step,
+      speed_px_s: Number.isFinite(Number(curr.speed_px_s)) ? Number(curr.speed_px_s) : null,
+    });
+  }
+  return segments;
+}
+
 function severityLabel(level) {
   if (level === "high") return t("level_high");
   if (level === "medium") return t("level_medium");
@@ -1487,17 +1637,85 @@ function renderKpis(summary = {}) {
 }
 
 function setCommonChartStyle(option) {
+  const c = chartColors();
   return {
     animationDuration: 500,
     animationEasing: "cubicOut",
-    textStyle: { color: "#d8e7e5", fontFamily: "Space Grotesk" },
+    textStyle: { color: c.text, fontFamily: "Space Grotesk" },
     grid: { left: 38, right: 20, top: 34, bottom: 34 },
-    tooltip: { trigger: "axis" },
+    tooltip: themedTooltip("axis"),
     ...option,
   };
 }
 
+function themedTooltip(trigger = "axis", extra = {}) {
+  const c = chartColors();
+  return {
+    trigger,
+    backgroundColor: currentTheme === "light" ? "rgba(255,255,255,0.95)" : "rgba(13,22,33,0.95)",
+    borderColor: c.splitLine,
+    borderWidth: 1,
+    textStyle: { color: c.text },
+    ...extra,
+  };
+}
+
+function chartColors() {
+  if (currentTheme === "light") {
+    return {
+      text: "#2f4555",
+      axis: "#5e788a",
+      legend: "#4f6877",
+      label: "#3b5463",
+      splitLine: "rgba(64,92,111,0.16)",
+      radarLine: "rgba(74,108,126,0.26)",
+      radarArea: "rgba(35,66,88,0.05)",
+      markLine: "#ba8a44",
+      markLabel: "#7e5824",
+      heatLabel: "#597587",
+      shadow: "rgba(47,71,90,0.22)",
+      teal: "#2f9b85",
+      amber: "#cd9a43",
+      blue: "#3f85d7",
+      coral: "#ce705f",
+      red: "#d4605a",
+      mint: "#5ab5a6",
+      green: "#67ad7d",
+      orange: "#cf8664",
+      captureBar: "rgba(63,133,215,0.62)",
+      heatMapRange: ["#eef4fa", "#c9deec", "#9ec6de", "#74acba", "#d8b77a"],
+      hoardRange: ["#e8f0f8", "#c2d9eb", "#93bed8", "#7cb0b1", "#dbb47a"],
+    };
+  }
+
+  return {
+    text: "#d8e7e5",
+    axis: "#9ec5bf",
+    legend: "#a0c8c2",
+    label: "#dcebe8",
+    splitLine: "rgba(255,255,255,0.08)",
+    radarLine: "rgba(180,215,209,0.2)",
+    radarArea: "rgba(255,255,255,0.01)",
+    markLine: "#ffbf5b",
+    markLabel: "#ffd489",
+    heatLabel: "#bdd7d0",
+    shadow: "rgba(0,0,0,0.4)",
+    teal: "#3cc6a8",
+    amber: "#ffbf5b",
+    blue: "#4aa3ff",
+    coral: "#ff7b66",
+    red: "#ff6b63",
+    mint: "#7fe0cf",
+    green: "#7ce09d",
+    orange: "#ff8f66",
+    captureBar: "rgba(74,163,255,0.7)",
+    heatMapRange: ["#092033", "#0f5f6f", "#22a699", "#ffe08a", "#ff8b66"],
+    hoardRange: ["#0f455f", "#39b7a6", "#ffd281", "#ff9169"],
+  };
+}
+
 function renderOdometer(data) {
+  const c = chartColors();
   const ts = data.timeseries || [];
   const labels = ts.map((x) => toHour(x.timestamp));
   const speed = ts.map((x) => x.speed_kmh);
@@ -1506,9 +1724,9 @@ function renderOdometer(data) {
 
   charts["chart-speed-rpm"].setOption(
     setCommonChartStyle({
-      xAxis: { type: "category", data: labels, axisLabel: { color: "#9ec5bf", interval: 120 } },
+      xAxis: { type: "category", data: labels, axisLabel: { color: c.axis, interval: 120 } },
       yAxis: [
-        { type: "value", name: "km/h", splitLine: { lineStyle: { color: "rgba(255,255,255,0.08)" } } },
+        { type: "value", name: "km/h", splitLine: { lineStyle: { color: c.splitLine } } },
         { type: "value", name: "RPM" },
       ],
       series: [
@@ -1518,8 +1736,8 @@ function renderOdometer(data) {
           smooth: true,
           data: speed,
           showSymbol: false,
-          lineStyle: { width: 2, color: "#3cc6a8" },
-          areaStyle: { color: "rgba(60,198,168,0.17)" },
+          lineStyle: { width: 2, color: c.teal },
+          areaStyle: { color: currentTheme === "light" ? "rgba(47,155,133,0.16)" : "rgba(60,198,168,0.17)" },
         },
         {
           name: t("legend_rpm"),
@@ -1528,17 +1746,17 @@ function renderOdometer(data) {
           smooth: true,
           data: rpm,
           showSymbol: false,
-          lineStyle: { width: 1.8, color: "#ffbf5b" },
+          lineStyle: { width: 1.8, color: c.amber },
         },
       ],
-      legend: { data: [t("legend_speed"), t("legend_rpm")], textStyle: { color: "#a0c8c2" } },
+      legend: { data: [t("legend_speed"), t("legend_rpm")], textStyle: { color: c.legend } },
     })
   );
 
   const hourly = data.odometer?.hourly || [];
   charts["chart-hourly-distance"].setOption(
     setCommonChartStyle({
-      xAxis: { type: "category", data: hourly.map((x) => x.hour), axisLabel: { color: "#9ec5bf" } },
+      xAxis: { type: "category", data: hourly.map((x) => x.hour), axisLabel: { color: c.axis } },
       yAxis: [
         { type: "value", name: "km" },
         { type: "value", name: "switches" },
@@ -1548,7 +1766,7 @@ function renderOdometer(data) {
           type: "bar",
           name: t("legend_distance"),
           data: hourly.map((x) => x.distance_km),
-          itemStyle: { color: "#4aa3ff", borderRadius: [5, 5, 0, 0] },
+          itemStyle: { color: c.blue, borderRadius: [5, 5, 0, 0] },
         },
         {
           type: "line",
@@ -1556,37 +1774,37 @@ function renderOdometer(data) {
           yAxisIndex: 1,
           data: hourly.map((x) => x.stop_go_events),
           smooth: true,
-          lineStyle: { color: "#ff7b66" },
+          lineStyle: { color: c.coral },
           showSymbol: false,
         },
       ],
-      legend: { data: [t("legend_distance"), t("legend_stop_go")], textStyle: { color: "#a0c8c2" } },
+      legend: { data: [t("legend_distance"), t("legend_stop_go")], textStyle: { color: c.legend } },
     })
   );
 
   const direction = data.odometer?.direction_distribution || { forward: 0, reverse: 0, idle: 0 };
   charts["chart-direction"].setOption({
     animationDuration: 500,
-    tooltip: { trigger: "item" },
-    legend: { bottom: 0, textStyle: { color: "#b9d7d2" } },
+    tooltip: themedTooltip("item"),
+    legend: { bottom: 0, textStyle: { color: c.legend } },
     series: [
       {
         type: "pie",
         radius: ["32%", "68%"],
         center: ["50%", "46%"],
         data: [
-          { name: t("dir_forward"), value: direction.forward, itemStyle: { color: "#3cc6a8" } },
-          { name: t("dir_reverse"), value: direction.reverse, itemStyle: { color: "#ffbf5b" } },
-          { name: t("dir_idle"), value: direction.idle, itemStyle: { color: "#4aa3ff" } },
+          { name: t("dir_forward"), value: direction.forward, itemStyle: { color: c.teal } },
+          { name: t("dir_reverse"), value: direction.reverse, itemStyle: { color: c.amber } },
+          { name: t("dir_idle"), value: direction.idle, itemStyle: { color: c.blue } },
         ],
-        label: { color: "#e4f2ee" },
+        label: { color: c.label },
       },
     ],
   });
 
   charts["chart-running-streak"].setOption(
     setCommonChartStyle({
-      xAxis: { type: "category", data: labels, axisLabel: { interval: 120, color: "#9ec5bf" } },
+      xAxis: { type: "category", data: labels, axisLabel: { interval: 120, color: c.axis } },
       yAxis: { type: "value", name: "min" },
       series: [
         {
@@ -1594,8 +1812,8 @@ function renderOdometer(data) {
           smooth: true,
           showSymbol: false,
           data: streak,
-          lineStyle: { color: "#7fe0cf", width: 2 },
-          areaStyle: { color: "rgba(127,224,207,0.2)" },
+          lineStyle: { color: c.mint, width: 2 },
+          areaStyle: { color: currentTheme === "light" ? "rgba(90,181,166,0.18)" : "rgba(127,224,207,0.2)" },
         },
       ],
     })
@@ -1603,6 +1821,7 @@ function renderOdometer(data) {
 }
 
 function renderSpatial(data) {
+  const c = chartColors();
   const spatial = data.spatial || {};
   const heat = spatial.heatmap || [];
   const rows = spatial.heatmap_rows || 0;
@@ -1618,7 +1837,7 @@ function renderSpatial(data) {
 
   charts["chart-heatmap"].setOption({
     animationDuration: 500,
-    tooltip: { position: "top" },
+    tooltip: themedTooltip("item", { position: "top" }),
     grid: { left: 42, right: 14, top: 18, bottom: 30 },
     xAxis: { type: "category", data: Array.from({ length: cols }, (_, i) => i), show: false },
     yAxis: { type: "category", data: Array.from({ length: rows }, (_, i) => i), show: false },
@@ -1628,41 +1847,134 @@ function renderSpatial(data) {
       orient: "horizontal",
       left: "center",
       bottom: 0,
-      textStyle: { color: "#bdd7d0" },
-      inRange: { color: ["#092033", "#0f5f6f", "#22a699", "#ffe08a", "#ff8b66"] },
+      textStyle: { color: c.heatLabel },
+      inRange: { color: c.heatMapRange },
     },
-    series: [{ type: "heatmap", data: heatData, emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.4)" } } }],
+    series: [{ type: "heatmap", data: heatData, emphasis: { itemStyle: { shadowBlur: 8, shadowColor: c.shadow } } }],
   });
 
-  const trajectory = (spatial.trajectory || []).map((p) => [p.x, p.y]);
+  const rawTrajectory = Array.isArray(spatial.trajectory) ? spatial.trajectory : [];
+  const trajectoryPoints = rawTrajectory
+    .map((p) => ({
+      x: Number(p?.x),
+      y: Number(p?.y),
+      timestamp: p?.timestamp || "",
+      zone: p?.zone || "",
+      step_px: Number.isFinite(Number(p?.step_px)) ? Number(p.step_px) : null,
+      speed_px_s: Number.isFinite(Number(p?.speed_px_s)) ? Number(p.speed_px_s) : null,
+      heading_deg: Number.isFinite(Number(p?.heading_deg)) ? Number(p.heading_deg) : null,
+    }))
+    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+  const sampledTrajectory = sampleTrajectory(trajectoryPoints, 420);
+  const trajectoryLineData = sampledTrajectory.map((p) => ({
+    value: [p.x, p.y],
+    timestamp: p.timestamp,
+    zone: p.zone,
+    step_px: p.step_px,
+    speed_px_s: p.speed_px_s,
+    heading_deg: p.heading_deg,
+  }));
+  const trajectorySegments = buildTrajectorySegments(sampledTrajectory);
+  const trajectoryStart = trajectoryLineData.length > 0 ? [trajectoryLineData[0]] : [];
+  const trajectoryEnd = trajectoryLineData.length > 0 ? [trajectoryLineData[trajectoryLineData.length - 1]] : [];
+  const directionPeriod = Math.max(2.4, Math.min(8.5, sampledTrajectory.length / 48));
+  const xMax = Number(data.meta?.frame_width) > 0 ? Number(data.meta.frame_width) : Math.max(1, ...trajectoryPoints.map((p) => p.x));
+  const yMax = Number(data.meta?.frame_height) > 0 ? Number(data.meta.frame_height) : Math.max(1, ...trajectoryPoints.map((p) => p.y));
+
   charts["chart-trajectory"].setOption({
     animationDuration: 500,
-    grid: { left: 42, right: 14, top: 26, bottom: 30 },
-    xAxis: { type: "value", min: 0, max: data.meta.frame_width, axisLabel: { color: "#9ec5bf" } },
-    yAxis: { type: "value", min: 0, max: data.meta.frame_height, inverse: true, axisLabel: { color: "#9ec5bf" } },
-    tooltip: { trigger: "item" },
+    grid: { left: 42, right: 14, top: 26, bottom: 46 },
+    xAxis: { type: "value", min: 0, max: xMax, axisLabel: { color: c.axis } },
+    yAxis: { type: "value", min: 0, max: yMax, inverse: true, axisLabel: { color: c.axis } },
+    tooltip: themedTooltip("item", {
+      formatter: (params) => {
+        if (!params) return "";
+        if (params.seriesType === "lines") {
+          const seg = params.data || {};
+          const fromText = seg.from ? toHour(seg.from) : "-";
+          const toText = seg.to ? toHour(seg.to) : "-";
+          const stepText = Number.isFinite(Number(seg.step_px)) ? `${fmtNumber(seg.step_px, 1)} px` : "-";
+          const speedText = Number.isFinite(Number(seg.speed_px_s)) ? `${fmtNumber(seg.speed_px_s, 1)} px/s` : "-";
+          return `${params.marker}${t("legend_trajectory_direction")}<br/>${t("trajectory_time")}: ${fromText} -> ${toText}<br/>${t("trajectory_zone")}: ${zoneLabel(seg.zone)}<br/>${t("trajectory_step")}: ${stepText}<br/>${t("trajectory_speed")}: ${speedText}`;
+        }
+        const item = params.data || {};
+        const value = Array.isArray(item.value) ? item.value : Array.isArray(params.value) ? params.value : [];
+        const x = Number(value[0]);
+        const y = Number(value[1]);
+        const tsText = item.timestamp ? toHour(item.timestamp) : "-";
+        const stepText = Number.isFinite(Number(item.step_px)) ? `${fmtNumber(item.step_px, 1)} px` : "-";
+        const speedText = Number.isFinite(Number(item.speed_px_s)) ? `${fmtNumber(item.speed_px_s, 1)} px/s` : "-";
+        return `${params.marker}${params.seriesName}<br/>${t("trajectory_time")}: ${tsText}<br/>x: ${Number.isFinite(x) ? fmtNumber(x, 1) : "-"}, y: ${Number.isFinite(y) ? fmtNumber(y, 1) : "-"}<br/>${t("trajectory_zone")}: ${zoneLabel(item.zone)}<br/>${t("trajectory_step")}: ${stepText}<br/>${t("trajectory_speed")}: ${speedText}`;
+      },
+    }),
+    legend: {
+      bottom: 0,
+      textStyle: { color: c.legend },
+      data: [t("legend_trajectory_path"), t("legend_trajectory_direction"), t("legend_trajectory_start"), t("legend_trajectory_end")],
+    },
     series: [
-      { type: "line", data: trajectory, showSymbol: false, lineStyle: { color: "#4aa3ff", width: 1.6, opacity: 0.82 } },
-      { type: "scatter", data: trajectory, symbolSize: 2, itemStyle: { color: "#3cc6a8", opacity: 0.55 } },
+      {
+        name: t("legend_trajectory_path"),
+        type: "line",
+        data: trajectoryLineData,
+        showSymbol: false,
+        lineStyle: { color: c.blue, width: 1.8, opacity: 0.86 },
+        z: 2,
+      },
+      {
+        name: t("legend_trajectory_direction"),
+        type: "lines",
+        coordinateSystem: "cartesian2d",
+        data: trajectorySegments,
+        lineStyle: { color: c.teal, width: 1.2, opacity: 0.24, curveness: 0 },
+        effect: {
+          show: trajectorySegments.length > 1,
+          period: directionPeriod,
+          trailLength: 0.08,
+          symbol: "arrow",
+          symbolSize: 7,
+          color: c.amber,
+          constantSpeed: 30,
+        },
+        zlevel: 1,
+      },
+      {
+        name: t("legend_trajectory_start"),
+        type: "scatter",
+        data: trajectoryStart,
+        symbol: "circle",
+        symbolSize: 9,
+        itemStyle: { color: c.green, borderColor: currentTheme === "light" ? "#ffffff" : "#0f1e2b", borderWidth: 1.2 },
+        z: 3,
+      },
+      {
+        name: t("legend_trajectory_end"),
+        type: "scatter",
+        data: trajectoryEnd,
+        symbol: "diamond",
+        symbolSize: 10,
+        itemStyle: { color: c.red, borderColor: currentTheme === "light" ? "#ffffff" : "#0f1e2b", borderWidth: 1.2 },
+        z: 3,
+      },
     ],
   });
 
   const ratio = spatial.zone_dwell_ratio || {};
   charts["chart-zone-dwell"].setOption({
     animationDuration: 500,
-    tooltip: { trigger: "item" },
-    legend: { bottom: 0, textStyle: { color: "#a7c9c3" } },
+    tooltip: themedTooltip("item"),
+    legend: { bottom: 0, textStyle: { color: c.legend } },
     series: [
       {
         type: "pie",
         center: ["50%", "46%"],
         radius: ["28%", "66%"],
         data: [
-          { name: t("zone_food"), value: ratio.food_zone ?? 0, itemStyle: { color: "#ffbf5b" } },
-          { name: t("zone_sand"), value: ratio.sand_bath_zone ?? 0, itemStyle: { color: "#4aa3ff" } },
-          { name: t("zone_hideout"), value: ratio.hideout_zone ?? 0, itemStyle: { color: "#3cc6a8" } },
+          { name: t("zone_food"), value: ratio.food_zone ?? 0, itemStyle: { color: c.amber } },
+          { name: t("zone_sand"), value: ratio.sand_bath_zone ?? 0, itemStyle: { color: c.blue } },
+          { name: t("zone_hideout"), value: ratio.hideout_zone ?? 0, itemStyle: { color: c.teal } },
         ],
-        label: { formatter: ({ name, value }) => `${name}: ${(value * 100).toFixed(1)}%`, color: "#dcebe8" },
+        label: { formatter: ({ name, value }) => `${name}: ${(value * 100).toFixed(1)}%`, color: c.label },
       },
     ],
   });
@@ -1670,14 +1982,15 @@ function renderSpatial(data) {
   const escapeEvents = spatial.escape_events || [];
   charts["chart-escape"].setOption(
     setCommonChartStyle({
-      xAxis: { type: "category", data: escapeEvents.map((e) => toHour(e.timestamp)), axisLabel: { color: "#9ec5bf" } },
+      xAxis: { type: "category", data: escapeEvents.map((e) => toHour(e.timestamp)), axisLabel: { color: c.axis } },
       yAxis: { type: "value", name: t("axis_events") },
-      series: [{ type: "bar", data: escapeEvents.map(() => 1), itemStyle: { color: "#ff6b63", borderRadius: [5, 5, 0, 0] }, barMaxWidth: 18 }],
+      series: [{ type: "bar", data: escapeEvents.map(() => 1), itemStyle: { color: c.red, borderRadius: [5, 5, 0, 0] }, barMaxWidth: 18 }],
     })
   );
 }
 
 function renderHealth(data) {
+  const c = chartColors();
   const scans = data.health?.scans || [];
   const latest = data.health?.latest;
 
@@ -1696,9 +2009,9 @@ function renderHealth(data) {
         { name: t("legend_gait"), max: 1 },
         { name: t("legend_volume"), max: 1 },
       ],
-      splitLine: { lineStyle: { color: "rgba(180,215,209,0.2)" } },
-      axisLine: { lineStyle: { color: "rgba(180,215,209,0.2)" } },
-      splitArea: { areaStyle: { color: ["rgba(255,255,255,0.01)"] } },
+      splitLine: { lineStyle: { color: c.radarLine } },
+      axisLine: { lineStyle: { color: c.radarLine } },
+      splitArea: { areaStyle: { color: [c.radarArea] } },
     },
     series: [
       {
@@ -1706,9 +2019,9 @@ function renderHealth(data) {
         data: [
           {
             value: [latest.fur_score, latest.expression_score, latest.gait_symmetry_score, Math.max(0, 1 - Math.abs(latest.volume_change_ratio))],
-            areaStyle: { color: "rgba(60,198,168,0.25)" },
-            lineStyle: { color: "#3cc6a8" },
-            itemStyle: { color: "#3cc6a8" },
+            areaStyle: { color: currentTheme === "light" ? "rgba(47,155,133,0.2)" : "rgba(60,198,168,0.25)" },
+            lineStyle: { color: c.teal },
+            itemStyle: { color: c.teal },
           },
         ],
       },
@@ -1717,44 +2030,45 @@ function renderHealth(data) {
 
   charts["chart-health-trend"].setOption(
     setCommonChartStyle({
-      xAxis: { type: "category", data: scans.map((x) => toHour(x.timestamp)), axisLabel: { color: "#9ec5bf" } },
+      xAxis: { type: "category", data: scans.map((x) => toHour(x.timestamp)), axisLabel: { color: c.axis } },
       yAxis: [
         { type: "value", min: 0, max: 1, name: t("axis_scores") },
         { type: "value", min: -0.3, max: 0.3, name: t("axis_volume") },
       ],
-      legend: { data: [t("legend_fur"), t("legend_expression"), t("legend_gait"), t("legend_volume")], textStyle: { color: "#a0c8c2" } },
+      legend: { data: [t("legend_fur"), t("legend_expression"), t("legend_gait"), t("legend_volume")], textStyle: { color: c.legend } },
       series: [
-        { type: "line", name: t("legend_fur"), showSymbol: false, smooth: true, data: scans.map((x) => x.fur_score), lineStyle: { color: "#3cc6a8" } },
-        { type: "line", name: t("legend_expression"), showSymbol: false, smooth: true, data: scans.map((x) => x.expression_score), lineStyle: { color: "#4aa3ff" } },
-        { type: "line", name: t("legend_gait"), showSymbol: false, smooth: true, data: scans.map((x) => x.gait_symmetry_score), lineStyle: { color: "#ffbf5b" } },
-        { type: "line", name: t("legend_volume"), yAxisIndex: 1, showSymbol: false, smooth: true, data: scans.map((x) => x.volume_change_ratio), lineStyle: { color: "#ff7b66" } },
+        { type: "line", name: t("legend_fur"), showSymbol: false, smooth: true, data: scans.map((x) => x.fur_score), lineStyle: { color: c.teal } },
+        { type: "line", name: t("legend_expression"), showSymbol: false, smooth: true, data: scans.map((x) => x.expression_score), lineStyle: { color: c.blue } },
+        { type: "line", name: t("legend_gait"), showSymbol: false, smooth: true, data: scans.map((x) => x.gait_symmetry_score), lineStyle: { color: c.amber } },
+        { type: "line", name: t("legend_volume"), yAxisIndex: 1, showSymbol: false, smooth: true, data: scans.map((x) => x.volume_change_ratio), lineStyle: { color: c.coral } },
       ],
     })
   );
 }
 
 function renderInventory(data) {
+  const c = chartColors();
   const water = data.inventory?.water_series || [];
   const food = data.inventory?.food_series || [];
   const gnaw = data.inventory?.gnaw_series || [];
 
   charts["chart-resource"].setOption(
     setCommonChartStyle({
-      xAxis: { type: "category", data: water.map((x) => toHour(x.timestamp)), axisLabel: { color: "#9ec5bf", interval: 120 } },
+      xAxis: { type: "category", data: water.map((x) => toHour(x.timestamp)), axisLabel: { color: c.axis, interval: 120 } },
       yAxis: { type: "value", min: 0, max: 1 },
-      legend: { data: [t("legend_water"), t("legend_food")], textStyle: { color: "#a0c8c2" } },
+      legend: { data: [t("legend_water"), t("legend_food")], textStyle: { color: c.legend } },
       series: [
-        { type: "line", name: t("legend_water"), smooth: true, showSymbol: false, data: water.map((x) => x.value), lineStyle: { color: "#4aa3ff" }, areaStyle: { color: "rgba(74,163,255,0.14)" } },
-        { type: "line", name: t("legend_food"), smooth: true, showSymbol: false, data: food.map((x) => x.value), lineStyle: { color: "#ffbf5b" }, areaStyle: { color: "rgba(255,191,91,0.14)" } },
+        { type: "line", name: t("legend_water"), smooth: true, showSymbol: false, data: water.map((x) => x.value), lineStyle: { color: c.blue }, areaStyle: { color: currentTheme === "light" ? "rgba(63,133,215,0.13)" : "rgba(74,163,255,0.14)" } },
+        { type: "line", name: t("legend_food"), smooth: true, showSymbol: false, data: food.map((x) => x.value), lineStyle: { color: c.amber }, areaStyle: { color: currentTheme === "light" ? "rgba(205,154,67,0.14)" : "rgba(255,191,91,0.14)" } },
       ],
     })
   );
 
   charts["chart-gnaw"].setOption(
     setCommonChartStyle({
-      xAxis: { type: "category", data: gnaw.map((x) => toHour(x.timestamp)), axisLabel: { color: "#9ec5bf", interval: 120 } },
+      xAxis: { type: "category", data: gnaw.map((x) => toHour(x.timestamp)), axisLabel: { color: c.axis, interval: 120 } },
       yAxis: { type: "value", min: 0, max: 1 },
-      series: [{ type: "line", smooth: true, showSymbol: false, data: gnaw.map((x) => x.value), lineStyle: { color: "#ff8f66", width: 2 }, areaStyle: { color: "rgba(255,143,102,0.16)" } }],
+      series: [{ type: "line", smooth: true, showSymbol: false, data: gnaw.map((x) => x.value), lineStyle: { color: c.orange, width: 2 }, areaStyle: { color: currentTheme === "light" ? "rgba(207,134,100,0.16)" : "rgba(255,143,102,0.16)" } }],
     })
   );
 
@@ -1762,9 +2076,9 @@ function renderInventory(data) {
   charts["chart-hoard"].setOption({
     animationDuration: 500,
     grid: { left: 42, right: 14, top: 24, bottom: 30 },
-    xAxis: { type: "value", min: 0, max: 39, axisLabel: { color: "#9ec5bf" } },
-    yAxis: { type: "value", min: 0, max: 23, inverse: true, axisLabel: { color: "#9ec5bf" } },
-    tooltip: { trigger: "item" },
+    xAxis: { type: "value", min: 0, max: 39, axisLabel: { color: c.axis } },
+    yAxis: { type: "value", min: 0, max: 23, inverse: true, axisLabel: { color: c.axis } },
+    tooltip: themedTooltip("item"),
     visualMap: {
       min: 0,
       max: 1,
@@ -1772,32 +2086,33 @@ function renderInventory(data) {
       orient: "horizontal",
       left: "center",
       bottom: 0,
-      textStyle: { color: "#bdd7d0" },
-      inRange: { color: ["#0f455f", "#39b7a6", "#ffd281", "#ff9169"] },
+      textStyle: { color: c.heatLabel },
+      inRange: { color: c.hoardRange },
     },
     series: [{ type: "scatter", symbolSize: (val) => 18 + val[2] * 22, data: hoard.map((x) => [x.grid_col, x.grid_row, x.intensity]), itemStyle: { opacity: 0.9 } }],
   });
 }
 
 function renderBehavior(data) {
+  const c = chartColors();
   const hourly = data.behavior?.hourly || [];
   const anxiety = data.behavior?.anxiety_series || [];
 
   charts["chart-behavior-hourly"].setOption(
     setCommonChartStyle({
-      xAxis: { type: "category", data: hourly.map((x) => x.hour), axisLabel: { color: "#9ec5bf" } },
+      xAxis: { type: "category", data: hourly.map((x) => x.hour), axisLabel: { color: c.axis } },
       yAxis: [{ type: "value", name: t("axis_count") }, { type: "value", name: t("axis_minutes") }],
-      legend: { data: [t("legend_grooming"), t("legend_digging")], textStyle: { color: "#a0c8c2" } },
+      legend: { data: [t("legend_grooming"), t("legend_digging")], textStyle: { color: c.legend } },
       series: [
-        { type: "bar", name: t("legend_grooming"), data: hourly.map((x) => x.grooming_count), itemStyle: { color: "#3cc6a8", borderRadius: [4, 4, 0, 0] } },
-        { type: "line", name: t("legend_digging"), yAxisIndex: 1, smooth: true, showSymbol: false, data: hourly.map((x) => x.digging_minutes), lineStyle: { color: "#ffbf5b" } },
+        { type: "bar", name: t("legend_grooming"), data: hourly.map((x) => x.grooming_count), itemStyle: { color: c.teal, borderRadius: [4, 4, 0, 0] } },
+        { type: "line", name: t("legend_digging"), yAxisIndex: 1, smooth: true, showSymbol: false, data: hourly.map((x) => x.digging_minutes), lineStyle: { color: c.amber } },
       ],
     })
   );
 
   charts["chart-anxiety"].setOption(
     setCommonChartStyle({
-      xAxis: { type: "category", data: anxiety.map((x) => toHour(x.timestamp)), axisLabel: { color: "#9ec5bf", interval: 120 } },
+      xAxis: { type: "category", data: anxiety.map((x) => toHour(x.timestamp)), axisLabel: { color: c.axis, interval: 120 } },
       yAxis: { type: "value", min: 0, max: 1 },
       series: [
         {
@@ -1805,9 +2120,9 @@ function renderBehavior(data) {
           smooth: true,
           showSymbol: false,
           data: anxiety.map((x) => x.anxiety_index),
-          lineStyle: { color: "#ff6b63", width: 2 },
-          areaStyle: { color: "rgba(255,107,99,0.17)" },
-          markLine: { data: [{ yAxis: 0.7, name: t("alert_threshold") }], lineStyle: { color: "#ffbf5b" }, label: { color: "#ffd489" } },
+          lineStyle: { color: c.red, width: 2 },
+          areaStyle: { color: currentTheme === "light" ? "rgba(212,96,90,0.16)" : "rgba(255,107,99,0.17)" },
+          markLine: { data: [{ yAxis: 0.7, name: t("alert_threshold") }], lineStyle: { color: c.markLine }, label: { color: c.markLabel } },
         },
       ],
     })
@@ -1822,11 +2137,12 @@ function renderBehavior(data) {
 }
 
 function renderEnvironment(data) {
+  const c = chartColors();
   const envSeries = data.environment?.series || [];
 
   charts["chart-env-comfort"].setOption(
     setCommonChartStyle({
-      xAxis: { type: "category", data: envSeries.map((x) => toHour(x.timestamp)), axisLabel: { color: "#9ec5bf", interval: 120 } },
+      xAxis: { type: "category", data: envSeries.map((x) => toHour(x.timestamp)), axisLabel: { color: c.axis, interval: 120 } },
       yAxis: { type: "value", min: 0, max: 1 },
       series: [
         {
@@ -1834,12 +2150,12 @@ function renderEnvironment(data) {
           smooth: true,
           showSymbol: false,
           data: envSeries.map((x) => x.comfort_index),
-          lineStyle: { color: "#7ce09d", width: 2 },
-          areaStyle: { color: "rgba(124,224,157,0.2)" },
+          lineStyle: { color: c.green, width: 2 },
+          areaStyle: { color: currentTheme === "light" ? "rgba(103,173,125,0.2)" : "rgba(124,224,157,0.2)" },
           markLine: {
             data: [{ yAxis: 0.7, name: t("good_line") }, { yAxis: 0.45, name: t("risk_line") }],
-            lineStyle: { color: "#ffbf5b" },
-            label: { color: "#ffd489" },
+            lineStyle: { color: c.markLine },
+            label: { color: c.markLabel },
           },
         },
       ],
@@ -1848,34 +2164,35 @@ function renderEnvironment(data) {
 
   charts["chart-env-factors"].setOption(
     setCommonChartStyle({
-      xAxis: { type: "category", data: envSeries.map((x) => toHour(x.timestamp)), axisLabel: { color: "#9ec5bf", interval: 120 } },
+      xAxis: { type: "category", data: envSeries.map((x) => toHour(x.timestamp)), axisLabel: { color: c.axis, interval: 120 } },
       yAxis: { type: "value", min: 0, max: 1 },
-      legend: { data: [t("legend_lighting"), t("legend_cleanliness"), t("legend_bedding")], textStyle: { color: "#a0c8c2" } },
+      legend: { data: [t("legend_lighting"), t("legend_cleanliness"), t("legend_bedding")], textStyle: { color: c.legend } },
       series: [
-        { type: "line", name: t("legend_lighting"), smooth: true, showSymbol: false, data: envSeries.map((x) => x.lighting_score), lineStyle: { color: "#ffbf5b" } },
-        { type: "line", name: t("legend_cleanliness"), smooth: true, showSymbol: false, data: envSeries.map((x) => x.cleanliness_score), lineStyle: { color: "#4aa3ff" } },
-        { type: "line", name: t("legend_bedding"), smooth: true, showSymbol: false, data: envSeries.map((x) => x.bedding_evenness), lineStyle: { color: "#3cc6a8" } },
+        { type: "line", name: t("legend_lighting"), smooth: true, showSymbol: false, data: envSeries.map((x) => x.lighting_score), lineStyle: { color: c.amber } },
+        { type: "line", name: t("legend_cleanliness"), smooth: true, showSymbol: false, data: envSeries.map((x) => x.cleanliness_score), lineStyle: { color: c.blue } },
+        { type: "line", name: t("legend_bedding"), smooth: true, showSymbol: false, data: envSeries.map((x) => x.bedding_evenness), lineStyle: { color: c.teal } },
       ],
     })
   );
 }
 
 function renderMotion(data) {
+  const c = chartColors();
   const series = data.motion?.series || [];
   charts["chart-motion"].setOption(
     setCommonChartStyle({
-      xAxis: { type: "category", data: series.map((x) => toHour(x.timestamp)), axisLabel: { color: "#9ec5bf", interval: 120 } },
+      xAxis: { type: "category", data: series.map((x) => toHour(x.timestamp)), axisLabel: { color: c.axis, interval: 120 } },
       yAxis: [{ type: "value", min: 0, max: 0.1, name: t("axis_ratio") }, { type: "value", min: 0, max: 1, name: t("axis_capture") }],
-      legend: { data: [t("legend_motion_ratio"), t("legend_capture_active")], textStyle: { color: "#a0c8c2" } },
+      legend: { data: [t("legend_motion_ratio"), t("legend_capture_active")], textStyle: { color: c.legend } },
       series: [
-        { type: "line", name: t("legend_motion_ratio"), smooth: true, showSymbol: false, data: series.map((x) => x.motion_ratio), lineStyle: { color: "#ff8f66" } },
+        { type: "line", name: t("legend_motion_ratio"), smooth: true, showSymbol: false, data: series.map((x) => x.motion_ratio), lineStyle: { color: c.orange } },
         {
           type: "bar",
           name: t("legend_capture_active"),
           yAxisIndex: 1,
           data: series.map((x) => (x.capture_active ? 1 : 0)),
           barMaxWidth: 10,
-          itemStyle: { color: "rgba(74,163,255,0.7)", borderRadius: [2, 2, 0, 0] },
+          itemStyle: { color: c.captureBar, borderRadius: [2, 2, 0, 0] },
         },
       ],
     })
@@ -2149,31 +2466,19 @@ async function loadInitFrame(source = "auto") {
 }
 
 async function fetchInitFramePayload(source = "auto") {
-  const candidates = [
-    { source, max_width: "0" },
-    { source, max_width: "1920" },
-    { source, max_width: "900" },
-    { source },
-  ];
-  let lastError = "unknown";
-
-  for (const params of candidates) {
-    const query = new URLSearchParams(params);
-    const response = await fetch(`/api/init/frame?${query.toString()}`, { cache: "no-store" });
-    if (response.ok) {
-      return response.json();
-    }
-
-    let detail = `${response.status}`;
-    try {
-      detail = await responseDetailText(response);
-    } catch (_err) {
-      // keep status code text
-    }
-    lastError = detail;
+  const query = new URLSearchParams({ source, max_width: "0" });
+  const response = await fetch(`/api/init/frame?${query.toString()}`, { cache: "no-store" });
+  if (response.ok) {
+    return response.json();
   }
 
-  throw new Error(`init frame request failed: ${lastError}`);
+  let detail = `${response.status}`;
+  try {
+    detail = await responseDetailText(response);
+  } catch (_err) {
+    // keep status code text
+  }
+  throw new Error(`init frame request failed: ${detail}`);
 }
 
 function currentStepKey() {
@@ -2646,6 +2951,8 @@ async function uploadDemoVideo() {
   analyzeBtn.disabled = true;
   try {
     let previewToken = "";
+    let forceOriginalUpload = false;
+    let previewFailText = "";
     status.textContent = t("upload_status_preview_preparing");
     try {
       const previewFrame = await extractFirstFrameForUploadPreview(file);
@@ -2656,29 +2963,34 @@ async function uploadDemoVideo() {
       status.textContent = t("upload_status_preview_ok");
     } catch (err) {
       uploadedPreviewAvailable = false;
-      status.textContent = formatText("upload_status_preview_fail", { error: String(err.message || err) });
+      previewFailText = formatText("upload_status_preview_fail", { error: String(err.message || err) });
+      forceOriginalUpload = true;
+      status.textContent = `${previewFailText} ${t("upload_status_preview_fallback_original")}`;
     }
-
-    status.textContent = t("upload_status_compressing");
 
     let fileToUpload = file;
     let uploadName = file.name || "upload.mp4";
-    try {
-      const compressed = await compressVideoForUpload(file);
-      fileToUpload = compressed.file;
-      uploadName = compressed.file.name || uploadName;
+    if (!forceOriginalUpload) {
+      status.textContent = t("upload_status_compressing");
+      try {
+        const compressed = await compressVideoForUpload(file);
+        fileToUpload = compressed.file;
+        uploadName = compressed.file.name || uploadName;
 
-      const ratio = compressed.originalSize > 0
-        ? ((compressed.compressedSize / compressed.originalSize) * 100).toFixed(1)
-        : "0.0";
+        const ratio = compressed.originalSize > 0
+          ? ((compressed.compressedSize / compressed.originalSize) * 100).toFixed(1)
+          : "0.0";
 
-      status.textContent = `${formatText("upload_status_compress_done", {
-        orig_mb: formatMb(compressed.originalSize),
-        new_mb: formatMb(compressed.compressedSize),
-        ratio,
-      })} ${t("upload_status_uploading")}`;
-    } catch (err) {
-      status.textContent = `${formatText("upload_status_compress_fail", { error: String(err) })} ${t("upload_status_fallback_original")} ${t("upload_status_uploading")}`;
+        status.textContent = `${formatText("upload_status_compress_done", {
+          orig_mb: formatMb(compressed.originalSize),
+          new_mb: formatMb(compressed.compressedSize),
+          ratio,
+        })} ${t("upload_status_uploading")}`;
+      } catch (err) {
+        status.textContent = `${formatText("upload_status_compress_fail", { error: String(err) })} ${t("upload_status_fallback_original")} ${t("upload_status_uploading")}`;
+      }
+    } else {
+      status.textContent = `${previewFailText} ${t("upload_status_preview_fallback_original")} ${t("upload_status_uploading")}`;
     }
 
     const query = new URLSearchParams({ filename: uploadName });
@@ -2895,6 +3207,7 @@ function bindEvents() {
   const toggleBtn = document.getElementById("toggle-auto-btn");
   const initBtn = document.getElementById("init-zones-btn");
   const settingsBtn = document.getElementById("settings-btn");
+  const themeBtn = document.getElementById("theme-toggle-btn");
   const viewTabs = document.getElementById("view-tabs");
 
   if (viewTabs) {
@@ -2922,6 +3235,12 @@ function bindEvents() {
     autoRefresh = !autoRefresh;
     toggleBtn.textContent = autoRefresh ? t("btn_auto_on") : t("btn_auto_off");
   });
+
+  if (themeBtn) {
+    themeBtn.addEventListener("click", () => {
+      toggleTheme();
+    });
+  }
 
   initBtn.addEventListener("click", async () => {
     openModal("init-modal");
@@ -3023,6 +3342,7 @@ function startAutoRefresh() {
 }
 
 async function bootstrap() {
+  setTheme(detectInitialTheme(), false);
   setLanguage("zh-CN");
   bindEvents();
   setDashboardTab(activeDashboardTab);
