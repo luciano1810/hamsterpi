@@ -63,6 +63,17 @@ class SpatialAnalyzer:
         self._escape_count = 0
         self._trajectory: Deque[dict] = deque(maxlen=max_trajectory_points)
         self._centroid_heat_radius = max(2, int(round(min(frame_width, frame_height) * 0.012)))
+        self._frames_seen = 0
+        self._frames_rejected_high_motion = 0
+        self._frames_with_centroid = 0
+
+        self._fence_mask = np.zeros((frame_height, frame_width), dtype=np.uint8)
+        if len(self.fence_polygon) >= 3:
+            cv2.fillPoly(self._fence_mask, [self.fence_polygon], 255)
+        else:
+            self._fence_mask[:, :] = 255
+        self._fence_area_pixels = max(1, int(np.count_nonzero(self._fence_mask)))
+        self._max_reliable_motion_ratio = 0.42
 
         self._motion_fence_mask = np.zeros((frame_height, frame_width), dtype=np.uint8)
         if len(self.motion_fence_polygon) >= 3:
@@ -107,10 +118,8 @@ class SpatialAnalyzer:
         x_f, y_f = float(projected[0, 0, 0]), float(projected[0, 0, 1])
         if not np.isfinite(x_f) or not np.isfinite(y_f):
             return None
-        x = int(round(x_f))
-        y = int(round(y_f))
-        if x < 0 or y < 0 or x >= self.frame_width or y >= self.frame_height:
-            return None
+        x = int(round(np.clip(x_f, 0, self.frame_width - 1)))
+        y = int(round(np.clip(y_f, 0, self.frame_height - 1)))
         return (x, y)
 
     def _motion_mask(self, frame: np.ndarray) -> np.ndarray:
@@ -124,8 +133,21 @@ class SpatialAnalyzer:
         return fg
 
     def update(self, frame: np.ndarray, timestamp: datetime, dt_seconds: float) -> SpatialMetrics:
+        self._frames_seen += 1
         motion = self._motion_mask(frame)
         active_pixels = int(np.count_nonzero(motion))
+        motion_ratio = active_pixels / max(self._fence_area_pixels, 1)
+
+        if motion_ratio > self._max_reliable_motion_ratio:
+            self._frames_rejected_high_motion += 1
+            return SpatialMetrics(
+                timestamp=timestamp.isoformat(),
+                centroid=None,
+                in_zone=None,
+                cumulative_path_length_m=self._path_length_pixels * self.meters_per_pixel,
+                escape_detected=False,
+                active_pixels=active_pixels,
+            )
 
         contour = self._largest_contour(motion)
         centroid_camera = self._contour_centroid(contour) if contour is not None else None
@@ -135,6 +157,7 @@ class SpatialAnalyzer:
         escape_detected = False
 
         if centroid is not None:
+            self._frames_with_centroid += 1
             if self._previous_centroid is not None:
                 self._path_length_pixels += float(np.linalg.norm(np.array(centroid) - np.array(self._previous_centroid)))
 
@@ -146,7 +169,8 @@ class SpatialAnalyzer:
             if escape_detected:
                 self._escape_count += 1
 
-            cv2.circle(self._heatmap, centroid, self._centroid_heat_radius, 1.0, thickness=-1)
+            if self._in_polygon(centroid, self.fence_polygon):
+                cv2.circle(self._heatmap, centroid, self._centroid_heat_radius, 1.0, thickness=-1)
 
             self._trajectory.append(
                 {
@@ -192,4 +216,7 @@ class SpatialAnalyzer:
             "escape_count": self._escape_count,
             "zone_dwell_seconds": dict(self._zone_dwell_seconds),
             "zone_ratio": zone_ratio,
+            "frames_seen": self._frames_seen,
+            "frames_with_centroid": self._frames_with_centroid,
+            "frames_rejected_high_motion": self._frames_rejected_high_motion,
         }

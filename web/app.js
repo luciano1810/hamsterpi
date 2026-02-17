@@ -1556,7 +1556,8 @@ function renderSpatial(data) {
   const heatData = [];
   for (let r = 0; r < rows; r += 1) {
     for (let c = 0; c < cols; c += 1) {
-      heatData.push([c, r, heat[r]?.[c] ?? 0]);
+      // ECharts category y-axis is bottom-up by default; map row 0 (image top) to chart top.
+      heatData.push([c, rows - 1 - r, heat[r]?.[c] ?? 0]);
     }
   }
 

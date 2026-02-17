@@ -601,6 +601,9 @@ def _dashboard_from_pipeline_result(result: Dict[str, Any], config: SystemConfig
             "zone_dwell_seconds": zone_dwell_seconds,
             "zone_dwell_ratio": zone_ratio,
             "escape_events": escape_events,
+            "frames_seen": int(spatial_summary.get("frames_seen", 0)),
+            "frames_with_centroid": int(spatial_summary.get("frames_with_centroid", 0)),
+            "frames_rejected_high_motion": int(spatial_summary.get("frames_rejected_high_motion", 0)),
         },
         "health": {
             "latest": latest_health,

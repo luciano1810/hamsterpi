@@ -124,15 +124,55 @@ class HamsterVisionPipeline:
         ordered[3] = points[np.argmax(diffs)]  # bottom-left
         return ordered
 
+    @staticmethod
+    def _top_bottom_lr_quad(points: np.ndarray) -> Optional[np.ndarray]:
+        if points.shape[0] < 4:
+            return None
+
+        y_min = float(np.min(points[:, 1]))
+        y_max = float(np.max(points[:, 1]))
+        y_span = y_max - y_min
+        if y_span < 1e-3:
+            return None
+
+        band = max(2.0, y_span * 0.35)
+        top_candidates = points[points[:, 1] <= y_min + band]
+        bottom_candidates = points[points[:, 1] >= y_max - band]
+
+        if top_candidates.shape[0] < 2:
+            top_candidates = points[np.argsort(points[:, 1])[:2]]
+        if bottom_candidates.shape[0] < 2:
+            bottom_candidates = points[np.argsort(points[:, 1])[-2:]]
+
+        top_left = top_candidates[np.argmin(top_candidates[:, 0])]
+        top_right = top_candidates[np.argmax(top_candidates[:, 0])]
+        bottom_left = bottom_candidates[np.argmin(bottom_candidates[:, 0])]
+        bottom_right = bottom_candidates[np.argmax(bottom_candidates[:, 0])]
+
+        quad = np.array([top_left, top_right, bottom_right, bottom_left], dtype=np.float32)
+
+        # Degenerate selection (e.g., same point picked twice) should fallback.
+        unique = np.unique(quad.round(decimals=2), axis=0)
+        if unique.shape[0] < 4:
+            return None
+
+        if abs(cv2.contourArea(quad.astype(np.float32))) < 20.0:
+            return None
+        return quad
+
     def _polygon_to_quad(self, polygon: Sequence[Sequence[int]]) -> Optional[np.ndarray]:
         if len(polygon) < 3:
             return None
         pts = np.array(polygon, dtype=np.float32)
-        if pts.shape[0] == 4:
-            quad = pts
-        else:
-            rect = cv2.minAreaRect(pts)
-            quad = cv2.boxPoints(rect)
+
+        hull = cv2.convexHull(pts).reshape(-1, 2)
+        candidate = self._top_bottom_lr_quad(hull if hull.shape[0] >= 4 else pts)
+        if candidate is not None:
+            return candidate
+
+        # Fallback: keep previous ordering strategy from rectangle approximation.
+        rect = cv2.minAreaRect(pts)
+        quad = cv2.boxPoints(rect)
         ordered = self._order_quad(np.array(quad, dtype=np.float32))
         if abs(cv2.contourArea(ordered.astype(np.float32))) < 20.0:
             return None
