@@ -17,6 +17,8 @@ class AppConfig(BaseModel):
     run_mode: str = "demo"
     demo_source: str = "virtual"
     demo_upload_dir: str = "./uploads"
+    demo_analysis_resolution: str = "1280x720"
+    demo_analysis_fps: int = Field(default=15, ge=1, le=60)
 
     @field_validator("run_mode")
     @classmethod
@@ -33,6 +35,24 @@ class AppConfig(BaseModel):
         if value not in allowed:
             raise ValueError(f"demo_source must be one of {sorted(allowed)}")
         return value
+
+    @field_validator("demo_analysis_resolution")
+    @classmethod
+    def validate_demo_analysis_resolution(cls, value: str) -> str:
+        raw = str(value).strip().lower().replace(" ", "")
+        parts = raw.split("x")
+        if len(parts) != 2:
+            raise ValueError("demo_analysis_resolution must be in WxH format, e.g. 1280x720")
+        try:
+            width = int(parts[0])
+            height = int(parts[1])
+        except ValueError as exc:  # noqa: B904
+            raise ValueError("demo_analysis_resolution must contain integer width/height") from exc
+        if width < 320 or height < 180:
+            raise ValueError("demo_analysis_resolution is too small, min is 320x180")
+        if width > 3840 or height > 2160:
+            raise ValueError("demo_analysis_resolution is too large, max is 3840x2160")
+        return f"{width}x{height}"
 
 
 class VideoConfig(BaseModel):

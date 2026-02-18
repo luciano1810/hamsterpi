@@ -63,8 +63,13 @@ const I18N = {
     tab_overview: "总览",
     tab_stats: "数据统计",
     tab_live: "实时监控",
-    tab_live_title: "实时监控（预留）",
-    tab_live_desc: "该模块暂未接入，后续会开放实时视频流与事件看板。",
+    tab_live_title: "上传视频实时回看",
+    tab_live_desc: "在 demo + 上传视频模式下，实时监控页会直接播放当前选中的上传视频。",
+    live_status_waiting_mode: "当前仅在 demo + 上传视频模式可播放。",
+    live_status_waiting_upload: "请先上传并选择视频。",
+    live_status_loading: "正在加载上传视频...",
+    live_status_ready: "正在播放：{name}",
+    live_status_load_fail: "视频加载失败：{error}",
     section1_title: "1. 虚拟跑轮传感器",
     section1_desc: "速度、圈数、方向与跑停切换强度",
     section2_title: "2. 空间活跃度与领地分析",
@@ -169,12 +174,12 @@ const I18N = {
     settings_section_frontend: "前端展示",
     settings_section_logging: "日志系统",
     settings_section_demo_tools: "演示工具",
-    settings_section_app_desc: "运行模式、时区、上传目录等应用基础设置。",
+    settings_section_app_desc: "运行模式、演示数据来源与分析压缩参数等应用基础设置。",
     settings_section_video_desc: "视频源路径与输入帧率、分辨率设置。",
     settings_section_runtime_desc: "低内存模式、分析分辨率和帧处理节流。",
     settings_section_motion_desc: "画面变动触发录制相关阈值和输出参数。",
     settings_section_environment_desc: "光照、清洁与垫料舒适度分析参数。",
-    settings_section_wheel_desc: "跑轮直径、ROI 与色点检测阈值。",
+    settings_section_wheel_desc: "跑轮直径（用于速度估算）、ROI 与色点检测阈值。",
     settings_section_spatial_desc: "围栏、多边形区域、热区空间分析参数。",
     settings_section_health_desc: "健康扫描周期和体型基线设置。",
     settings_section_vlm_desc: "配置模型服务商、模型名、接口地址与鉴权环境变量。",
@@ -182,7 +187,7 @@ const I18N = {
     settings_section_alerts_desc: "越界通知与行为风险阈值配置。",
     settings_section_frontend_desc: "面板刷新周期、语言与历史窗口。",
     settings_section_logging_desc: "日志级别、落盘路径和滚动策略。",
-    settings_section_demo_tools_desc: "上传压缩视频，或选择已上传视频后进入圈区；圈区保存后自动分析。",
+    settings_section_demo_tools_desc: "上传完整视频，或选择已上传视频后进入圈区；圈区保存后自动压缩并分析。",
     settings_demo_tools_hint: "请先在“应用基础”中设置 run_mode=demo 且 demo_source=uploaded_video。",
     settings_form_empty: "当前分组没有可编辑字段。",
     settings_bool_true: "是",
@@ -220,7 +225,7 @@ const I18N = {
     upload_status_selecting: "正在载入已上传视频...",
     upload_status_selected_need_init: "已载入：{name}。可直接开始圈区初始化。",
     upload_status_select_fail: "载入已上传视频失败：{error}",
-    upload_status_uploading: "正在上传视频...",
+    upload_status_uploading: "正在上传完整视频...",
     upload_status_compressing: "正在本地压缩视频...",
     upload_status_compress_done: "压缩完成：{orig_mb}MB -> {new_mb}MB（{ratio}%）",
     upload_status_compress_fail: "视频压缩失败：{error}",
@@ -228,7 +233,7 @@ const I18N = {
     upload_status_upload_ok: "上传成功：{name}",
     upload_status_upload_ok_need_init: "上传成功：{name}。请先初始化圈区，保存后将自动分析。",
     upload_status_upload_fail: "上传失败：{error}",
-    upload_status_analyzing: "正在分析视频...",
+    upload_status_analyzing: "正在压缩并分析视频...",
     upload_status_analyze_ok: "视频分析完成。",
     upload_status_analyze_fail: "视频分析失败：{error}",
     upload_status_analyze_waiting: "分析请求连接中断，正在等待后台完成并同步结果...",
@@ -272,6 +277,7 @@ const I18N = {
     dir_forward: "正向",
     dir_reverse: "反向",
     dir_idle: "静止",
+    zone_wheel: "跑轮区",
     zone_food: "食盆区",
     zone_sand: "沙浴区",
     zone_hideout: "躲避窝",
@@ -368,8 +374,13 @@ const I18N = {
     tab_overview: "Overview",
     tab_stats: "Data Stats",
     tab_live: "Realtime Monitor",
-    tab_live_title: "Realtime Monitoring (Reserved)",
-    tab_live_desc: "This module is reserved. Live stream and event board will be added in a future release.",
+    tab_live_title: "Uploaded Video Playback",
+    tab_live_desc: "In demo + uploaded_video mode, this tab plays the currently selected uploaded video.",
+    live_status_waiting_mode: "Playback is available only in demo + uploaded_video mode.",
+    live_status_waiting_upload: "Upload and select a video first.",
+    live_status_loading: "Loading uploaded video...",
+    live_status_ready: "Playing: {name}",
+    live_status_load_fail: "Failed to load video: {error}",
     section1_title: "1. Virtual Odometer",
     section1_desc: "Speed, revolutions, direction and stop-go intensity",
     section2_title: "2. Spatial Analytics",
@@ -474,12 +485,12 @@ const I18N = {
     settings_section_frontend: "Frontend",
     settings_section_logging: "Logging",
     settings_section_demo_tools: "Demo Tools",
-    settings_section_app_desc: "Run mode, timezone and demo upload directory.",
+    settings_section_app_desc: "Run mode, demo source and analysis compression settings.",
     settings_section_video_desc: "Video source path, fps and frame dimensions.",
     settings_section_runtime_desc: "Low-memory profile and frame processing throttling.",
     settings_section_motion_desc: "Motion-trigger thresholds and capture output settings.",
     settings_section_environment_desc: "Lighting, cleanliness and bedding analysis parameters.",
-    settings_section_wheel_desc: "Wheel diameter, ROI and marker detection settings.",
+    settings_section_wheel_desc: "Wheel diameter (used for speed estimation), ROI and marker detection settings.",
     settings_section_spatial_desc: "Fence polygons, zones and spatial analytics parameters.",
     settings_section_health_desc: "Health scan interval and body-area baseline.",
     settings_section_vlm_desc: "Provider/model/endpoint/api key env and request timeout.",
@@ -487,7 +498,7 @@ const I18N = {
     settings_section_alerts_desc: "Escape notifier and risk threshold settings.",
     settings_section_frontend_desc: "Dashboard refresh interval, language and history window.",
     settings_section_logging_desc: "Log level, file path and rotation policy.",
-    settings_section_demo_tools_desc: "Upload a compressed video, or reuse an uploaded video, then save zones to trigger auto analysis.",
+    settings_section_demo_tools_desc: "Upload a full video, or reuse an uploaded video, then save zones to trigger auto compression and analysis.",
     settings_demo_tools_hint: "Set run_mode=demo and demo_source=uploaded_video in App Basics first.",
     settings_form_empty: "No editable fields in current group.",
     settings_bool_true: "True",
@@ -525,7 +536,7 @@ const I18N = {
     upload_status_selecting: "Loading selected uploaded video...",
     upload_status_selected_need_init: "Loaded: {name}. Start zone initialization directly.",
     upload_status_select_fail: "Failed to load uploaded video: {error}",
-    upload_status_uploading: "Uploading video...",
+    upload_status_uploading: "Uploading full video...",
     upload_status_compressing: "Compressing video locally...",
     upload_status_compress_done: "Compression done: {orig_mb}MB -> {new_mb}MB ({ratio}%)",
     upload_status_compress_fail: "Video compression failed: {error}",
@@ -533,7 +544,7 @@ const I18N = {
     upload_status_upload_ok: "Upload successful: {name}",
     upload_status_upload_ok_need_init: "Upload successful: {name}. Save zone initialization to start auto analysis.",
     upload_status_upload_fail: "Upload failed: {error}",
-    upload_status_analyzing: "Analyzing video...",
+    upload_status_analyzing: "Compressing and analyzing video...",
     upload_status_analyze_ok: "Video analysis completed.",
     upload_status_analyze_fail: "Video analysis failed: {error}",
     upload_status_analyze_waiting: "Connection dropped while analyzing. Waiting for backend completion and syncing results...",
@@ -577,6 +588,7 @@ const I18N = {
     dir_forward: "Forward",
     dir_reverse: "Reverse",
     dir_idle: "Idle",
+    zone_wheel: "Wheel",
     zone_food: "Food",
     zone_sand: "Sand Bath",
     zone_hideout: "Hideout",
@@ -669,6 +681,7 @@ let featuredFeedbackBusy = false;
 let featuredFeedbackMessage = "";
 let activeDashboardTab = "overview";
 let currentTheme = "dark";
+let liveVideoLoadedKey = "";
 const CLIENT_VIDEO_COMPRESS = {
   maxWidth: 960,
   maxHeight: 540,
@@ -695,13 +708,18 @@ const ANALYZE_RESULT_POLL = {
 };
 
 const SETTINGS_SECTIONS = [
-  { id: "app", path: "app", labelKey: "settings_section_app", descKey: "settings_section_app_desc" },
+  {
+    id: "app",
+    path: "app",
+    includeKeys: ["run_mode", "demo_source", "demo_analysis_resolution", "demo_analysis_fps"],
+    labelKey: "settings_section_app",
+    descKey: "settings_section_app_desc",
+  },
   { id: "video", path: "video", labelKey: "settings_section_video", descKey: "settings_section_video_desc" },
   { id: "runtime", path: "runtime", labelKey: "settings_section_runtime", descKey: "settings_section_runtime_desc" },
   { id: "motion_trigger", path: "motion_trigger", labelKey: "settings_section_motion", descKey: "settings_section_motion_desc" },
   { id: "environment", path: "environment", labelKey: "settings_section_environment", descKey: "settings_section_environment_desc" },
   { id: "wheel", path: "wheel", labelKey: "settings_section_wheel", descKey: "settings_section_wheel_desc" },
-  { id: "spatial", path: "spatial", labelKey: "settings_section_spatial", descKey: "settings_section_spatial_desc" },
   {
     id: "health",
     path: "health",
@@ -713,7 +731,6 @@ const SETTINGS_SECTIONS = [
   { id: "inventory", path: "inventory", labelKey: "settings_section_inventory", descKey: "settings_section_inventory_desc" },
   { id: "alerts", path: "alerts", labelKey: "settings_section_alerts", descKey: "settings_section_alerts_desc" },
   { id: "frontend", path: "frontend", labelKey: "settings_section_frontend", descKey: "settings_section_frontend_desc" },
-  { id: "logging", path: "logging", labelKey: "settings_section_logging", descKey: "settings_section_logging_desc" },
   { id: "demo_tools", path: "", special: "demo_tools", labelKey: "settings_section_demo_tools", descKey: "settings_section_demo_tools_desc" },
 ];
 
@@ -723,6 +740,8 @@ const SETTINGS_FIELD_LABELS = {
   "app.run_mode": { "zh-CN": "运行模式", "en-US": "Run Mode" },
   "app.demo_source": { "zh-CN": "演示数据来源", "en-US": "Demo Source" },
   "app.demo_upload_dir": { "zh-CN": "演示视频目录", "en-US": "Demo Upload Directory" },
+  "app.demo_analysis_resolution": { "zh-CN": "分析压缩分辨率", "en-US": "Analysis Compression Resolution" },
+  "app.demo_analysis_fps": { "zh-CN": "分析压缩帧率 (FPS)", "en-US": "Analysis Compression FPS" },
   "video.source_path": { "zh-CN": "视频源路径", "en-US": "Video Source Path" },
   "video.fps": { "zh-CN": "输入帧率 (FPS)", "en-US": "Input FPS" },
   "video.frame_width": { "zh-CN": "画面宽度 (px)", "en-US": "Frame Width (px)" },
@@ -758,7 +777,7 @@ const SETTINGS_FIELD_LABELS = {
   "environment.hygiene_dark_ratio_threshold": { "zh-CN": "卫生暗区阈值", "en-US": "Hygiene Dark-Ratio Threshold" },
   "environment.clutter_edge_threshold": { "zh-CN": "杂乱边缘阈值", "en-US": "Clutter Edge Threshold" },
   "environment.bedding_roi": { "zh-CN": "垫料区域 ROI", "en-US": "Bedding ROI" },
-  "wheel.diameter_cm": { "zh-CN": "跑轮直径 (cm)", "en-US": "Wheel Diameter (cm)" },
+  "wheel.diameter_cm": { "zh-CN": "跑轮直径 (cm，用于速度估算)", "en-US": "Wheel Diameter (cm, for speed estimation)" },
   "wheel.roi": { "zh-CN": "跑轮 ROI", "en-US": "Wheel ROI" },
   "wheel.min_rpm_for_running": { "zh-CN": "判定奔跑最小 RPM", "en-US": "Minimum Running RPM" },
   "wheel.marker_hsv_ranges": { "zh-CN": "色点 HSV 范围", "en-US": "Marker HSV Ranges" },
@@ -805,6 +824,8 @@ const SETTINGS_FIELD_OPTIONS = {
     { value: "virtual", labelKey: "source_virtual" },
     { value: "uploaded_video", labelKey: "source_uploaded_video" },
   ],
+  "app.demo_analysis_resolution": ["640x360", "854x480", "960x540", "1280x720", "1600x900", "1920x1080"],
+  "app.demo_analysis_fps": [8, 10, 12, 15, 18, 20, 24, 30],
   "video.fps": [5, 8, 10, 12, 15, 24, 30],
   "video.frame_width": [320, 480, 640, 960, 1280, 1920],
   "video.frame_height": [180, 270, 360, 540, 720, 1080],
@@ -839,7 +860,6 @@ const SETTINGS_FIELD_OPTIONS = {
   "environment.high_light_threshold": [0.75, 0.8, 0.85, 0.9, 0.95],
   "environment.hygiene_dark_ratio_threshold": [0.1, 0.15, 0.2, 0.24, 0.3, 0.35],
   "environment.clutter_edge_threshold": [0.1, 0.15, 0.18, 0.22, 0.25, 0.3],
-  "wheel.diameter_cm": [12, 14, 16, 18, 20, 22, 24],
   "wheel.min_rpm_for_running": [4, 6, 8, 10, 12, 15, 18],
   "health.capture_interval_seconds": [300, 600, 900, 1200, 1800, 3600],
   "health.baseline_body_area_px": [12000, 15000, 18000, 22000, 26000, 30000],
@@ -1454,6 +1474,7 @@ function applyStaticI18n() {
   renderSettingsSectionContent();
   renderUploadedVideoSelector();
   updateUploadBlockVisibility();
+  renderLiveVideoPanel();
 }
 
 function updateModeSelectorsLabel() {
@@ -1573,6 +1594,70 @@ function updateUploadBlockVisibility() {
     : formatText("upload_status_uploaded", { name: uploadedVideoName });
 }
 
+function clearLiveVideoSource(video) {
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+}
+
+function liveVideoDisplayName() {
+  return uploadedVideoName || uploadedVideoKey || "";
+}
+
+function renderLiveVideoPanel() {
+  const video = document.getElementById("live-upload-video");
+  const status = document.getElementById("live-upload-status");
+  if (!video || !status) {
+    return;
+  }
+
+  const modeReady = currentRunMode === "demo" && currentDemoSource === "uploaded_video";
+  if (!modeReady) {
+    if (liveVideoLoadedKey) {
+      clearLiveVideoSource(video);
+    }
+    liveVideoLoadedKey = "";
+    status.textContent = t("live_status_waiting_mode");
+    return;
+  }
+
+  if (!uploadedVideoKey) {
+    if (liveVideoLoadedKey) {
+      clearLiveVideoSource(video);
+    }
+    liveVideoLoadedKey = "";
+    status.textContent = t("live_status_waiting_upload");
+    return;
+  }
+
+  if (liveVideoLoadedKey !== uploadedVideoKey) {
+    liveVideoLoadedKey = uploadedVideoKey;
+    status.textContent = t("live_status_loading");
+    const src = `/api/demo/live-video?video_key=${encodeURIComponent(uploadedVideoKey)}&ts=${Date.now()}`;
+    video.pause();
+    video.src = src;
+    video.load();
+    const playPromise = video.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch(() => {});
+    }
+    return;
+  }
+
+  if (video.error) {
+    const code = Number(video.error?.code || 0);
+    const errorCode = code > 0 ? `MEDIA_ERR_${code}` : "unknown";
+    status.textContent = formatText("live_status_load_fail", { error: errorCode });
+    return;
+  }
+
+  if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+    status.textContent = formatText("live_status_ready", { name: liveVideoDisplayName() });
+  } else {
+    status.textContent = t("live_status_loading");
+  }
+}
+
 function fmtNumber(value, digits = 2) {
   return Number(value ?? 0).toFixed(digits);
 }
@@ -1589,6 +1674,7 @@ function toHour(ts) {
 }
 
 function zoneLabel(zoneKey) {
+  if (zoneKey === "wheel_zone") return t("zone_wheel");
   if (zoneKey === "food_zone") return t("zone_food");
   if (zoneKey === "sand_bath_zone") return t("zone_sand");
   if (zoneKey === "hideout_zone") return t("zone_hideout");
@@ -1847,6 +1933,8 @@ function setDashboardTab(nextTab) {
     const isActive = panel.getAttribute("data-tab-panel") === normalized;
     panel.classList.toggle("active", isActive);
   });
+
+  renderLiveVideoPanel();
 
   if (normalized !== "stats") {
     return;
@@ -2228,19 +2316,32 @@ function renderSpatial(data) {
     ],
   });
 
-  const positionTimeLabels = sampledTrajectory.map((p, idx) => {
+  const normalizeZoneTimelineKey = (zoneKey) => {
+    if (zoneKey === "wheel_zone" || zoneKey === "food_zone" || zoneKey === "sand_bath_zone" || zoneKey === "hideout_zone" || zoneKey === "outside") {
+      return zoneKey;
+    }
+    return "unknown";
+  };
+  const timelineSourceRaw = Array.isArray(data.timeseries) ? data.timeseries : [];
+  const timelineSource = timelineSourceRaw
+    .map((item) => ({
+      timestamp: item?.timestamp || "",
+      zone: normalizeZoneTimelineKey(item?.zone),
+    }))
+    .filter((item) => Boolean(item.timestamp));
+  const fallbackTimelineSource = sampledTrajectory.map((p) => ({
+    timestamp: p?.timestamp || "",
+    zone: normalizeZoneTimelineKey(p?.zone),
+  }));
+  const timelineSourceEffective = timelineSource.length > 0 ? timelineSource : fallbackTimelineSource;
+  const timelineTargetSamples = Math.max(80, Math.min(360, Math.max(1, timelineSourceEffective.length)));
+  const sampledTimeline = sampleTrajectory(timelineSourceEffective, timelineTargetSamples);
+
+  const positionTimeLabels = sampledTimeline.map((p, idx) => {
     const tsMs = timestampMs(p.timestamp);
     return tsMs === null ? `${t("point_label")} ${idx + 1}` : toHour(p.timestamp);
   });
-  const zoneTimeline = sampledTrajectory.map((p) => {
-    if (p?.escape) {
-      return "outside";
-    }
-    if (p?.zone === "food_zone" || p?.zone === "sand_bath_zone" || p?.zone === "hideout_zone") {
-      return p.zone;
-    }
-    return "unknown";
-  });
+  const zoneTimeline = sampledTimeline.map((p) => normalizeZoneTimelineKey(p?.zone));
   const dwellMinutesByIndex = new Array(zoneTimeline.length).fill(null);
   let segStart = 0;
   while (segStart < zoneTimeline.length) {
@@ -2249,8 +2350,8 @@ function renderSpatial(data) {
     while (segEnd + 1 < zoneTimeline.length && zoneTimeline[segEnd + 1] === segZone) {
       segEnd += 1;
     }
-    const startMs = timestampMs(sampledTrajectory[segStart]?.timestamp);
-    const endMs = timestampMs(sampledTrajectory[segEnd]?.timestamp);
+    const startMs = timestampMs(sampledTimeline[segStart]?.timestamp);
+    const endMs = timestampMs(sampledTimeline[segEnd]?.timestamp);
     const dwellMin = startMs !== null && endMs !== null ? Math.max(0, (endMs - startMs) / 60000) : null;
     for (let i = segStart; i <= segEnd; i += 1) {
       dwellMinutesByIndex[i] = dwellMin;
@@ -2258,6 +2359,7 @@ function renderSpatial(data) {
     segStart = segEnd + 1;
   }
   const zoneSeriesDefs = [
+    { key: "wheel_zone", name: t("zone_wheel"), color: c.green },
     { key: "food_zone", name: t("zone_food"), color: c.amber },
     { key: "sand_bath_zone", name: t("zone_sand"), color: c.blue },
     { key: "hideout_zone", name: t("zone_hideout"), color: c.teal },
@@ -2321,6 +2423,7 @@ function renderSpatial(data) {
         center: ["50%", "46%"],
         radius: ["28%", "66%"],
         data: [
+          { name: t("zone_wheel"), value: ratio.wheel_zone ?? 0, itemStyle: { color: c.green } },
           { name: t("zone_food"), value: ratio.food_zone ?? 0, itemStyle: { color: c.amber } },
           { name: t("zone_sand"), value: ratio.sand_bath_zone ?? 0, itemStyle: { color: c.blue } },
           { name: t("zone_hideout"), value: ratio.hideout_zone ?? 0, itemStyle: { color: c.teal } },
@@ -2764,6 +2867,7 @@ function renderGeneratedAt(data) {
 
 function renderDashboard(data) {
   renderGeneratedAt(data);
+  renderLiveVideoPanel();
   renderKpis(data.summary);
   renderFeaturedPhoto(data);
   renderOverviewQuickStats(data);
@@ -3518,6 +3622,7 @@ async function loadDemoStatus() {
     updateModeSelectorsLabel();
     renderUploadedVideoSelector();
     updateUploadBlockVisibility();
+    renderLiveVideoPanel();
   } catch (_err) {
     // Ignore transient status errors in UI.
   }
@@ -4138,61 +4243,16 @@ async function uploadDemoVideo() {
 
   uploadBtn.disabled = true;
   try {
-    let previewToken = "";
-    let forceOriginalUpload = false;
-    let previewFailText = "";
-    status.textContent = t("upload_status_preview_preparing");
-    try {
-      const previewFrame = await extractFirstFrameForUploadPreview(file);
-      status.textContent = t("upload_status_preview_uploading");
-      const preview = await uploadOriginalPreviewFrame(previewFrame);
-      previewToken = preview.previewToken;
-      uploadedPreviewAvailable = true;
-      status.textContent = t("upload_status_preview_ok");
-    } catch (err) {
-      uploadedPreviewAvailable = false;
-      previewFailText = t("upload_status_preview_backend_fallback");
-      forceOriginalUpload = true;
-      status.textContent = `${previewFailText} ${t("upload_status_preview_fallback_original")}`;
-      console.warn("upload preview extraction failed; falling back to server-side preview generation", err);
-    }
-
-    let fileToUpload = file;
-    let uploadName = file.name || "upload.mp4";
-    if (!forceOriginalUpload) {
-      status.textContent = t("upload_status_compressing");
-      try {
-        const compressed = await compressVideoForUpload(file);
-        fileToUpload = compressed.file;
-        uploadName = compressed.file.name || uploadName;
-
-        const ratio = compressed.originalSize > 0
-          ? ((compressed.compressedSize / compressed.originalSize) * 100).toFixed(1)
-          : "0.0";
-
-        status.textContent = `${formatText("upload_status_compress_done", {
-          orig_mb: formatMb(compressed.originalSize),
-          new_mb: formatMb(compressed.compressedSize),
-          ratio,
-        })} ${t("upload_status_uploading")}`;
-      } catch (err) {
-        status.textContent = `${formatText("upload_status_compress_fail", { error: String(err) })} ${t("upload_status_fallback_original")} ${t("upload_status_uploading")}`;
-      }
-    } else {
-      status.textContent = `${previewFailText} ${t("upload_status_preview_fallback_original")} ${t("upload_status_uploading")}`;
-    }
-
+    const uploadName = file.name || "upload.mp4";
+    status.textContent = t("upload_status_uploading");
     const query = new URLSearchParams({ filename: uploadName });
-    if (previewToken) {
-      query.set("preview_token", previewToken);
-    }
     const endpoint = `/api/demo/upload?${query.toString()}`;
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
-        "Content-Type": fileToUpload.type || "application/octet-stream",
+        "Content-Type": file.type || "application/octet-stream",
       },
-      body: fileToUpload,
+      body: file,
     });
 
     if (!response.ok) {
@@ -4423,6 +4483,28 @@ function bindEvents() {
         return;
       }
       setDashboardTab(target.getAttribute("data-tab-target"));
+    });
+  }
+
+  const liveVideo = document.getElementById("live-upload-video");
+  if (liveVideo) {
+    liveVideo.addEventListener("loadeddata", () => {
+      const status = document.getElementById("live-upload-status");
+      if (!status) {
+        return;
+      }
+      if (currentRunMode === "demo" && currentDemoSource === "uploaded_video" && uploadedVideoKey) {
+        status.textContent = formatText("live_status_ready", { name: liveVideoDisplayName() });
+      }
+    });
+    liveVideo.addEventListener("error", () => {
+      const status = document.getElementById("live-upload-status");
+      if (!status) {
+        return;
+      }
+      const code = Number(liveVideo.error?.code || 0);
+      const errorCode = code > 0 ? `MEDIA_ERR_${code}` : "unknown";
+      status.textContent = formatText("live_status_load_fail", { error: errorCode });
     });
   }
 

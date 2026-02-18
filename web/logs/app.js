@@ -7,6 +7,176 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+const LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"];
+const LOGGING_DEFAULT = {
+  level: "INFO",
+  file_path: "./logs/hamsterpi.log",
+  max_bytes: 5 * 1024 * 1024,
+  backup_count: 5,
+  console_enabled: true,
+};
+
+function setConfigStatus(text, isError = false) {
+  const node = document.getElementById("logging-config-status");
+  if (!node) {
+    return;
+  }
+  node.textContent = text;
+  node.classList.toggle("status-error", Boolean(isError));
+  node.classList.toggle("status-ok", !isError);
+}
+
+function ensureSelectOption(selectNode, value, label) {
+  if (!selectNode) {
+    return;
+  }
+  const targetValue = String(value);
+  const found = Array.from(selectNode.options).some((item) => item.value === targetValue);
+  if (found) {
+    return;
+  }
+  const option = document.createElement("option");
+  option.value = targetValue;
+  option.textContent = label || targetValue;
+  selectNode.appendChild(option);
+}
+
+function normalizeLoggingConfig(raw) {
+  const merged = { ...LOGGING_DEFAULT };
+  if (!raw || typeof raw !== "object") {
+    return merged;
+  }
+
+  const level = String(raw.level || "").trim().toUpperCase();
+  if (LOG_LEVELS.includes(level)) {
+    merged.level = level;
+  }
+
+  const filePath = String(raw.file_path || "").trim();
+  if (filePath) {
+    merged.file_path = filePath;
+  }
+
+  const maxBytes = Number(raw.max_bytes);
+  if (Number.isFinite(maxBytes) && maxBytes >= 1024) {
+    merged.max_bytes = Math.round(maxBytes);
+  }
+
+  const backupCount = Number(raw.backup_count);
+  if (Number.isFinite(backupCount) && backupCount >= 1) {
+    merged.backup_count = Math.round(backupCount);
+  }
+
+  if (typeof raw.console_enabled === "boolean") {
+    merged.console_enabled = raw.console_enabled;
+  }
+  return merged;
+}
+
+function renderLoggingConfig(cfg) {
+  const levelNode = document.getElementById("cfg-level");
+  const fileNode = document.getElementById("cfg-file-path");
+  const maxBytesNode = document.getElementById("cfg-max-bytes");
+  const backupNode = document.getElementById("cfg-backup-count");
+  const consoleNode = document.getElementById("cfg-console-enabled");
+
+  ensureSelectOption(maxBytesNode, cfg.max_bytes, `${cfg.max_bytes}`);
+  ensureSelectOption(backupNode, cfg.backup_count, `${cfg.backup_count}`);
+
+  if (levelNode) {
+    levelNode.value = cfg.level;
+  }
+  if (fileNode) {
+    fileNode.value = cfg.file_path;
+  }
+  if (maxBytesNode) {
+    maxBytesNode.value = String(cfg.max_bytes);
+  }
+  if (backupNode) {
+    backupNode.value = String(cfg.backup_count);
+  }
+  if (consoleNode) {
+    consoleNode.checked = Boolean(cfg.console_enabled);
+  }
+}
+
+function readLoggingConfigFromForm() {
+  const level = String(document.getElementById("cfg-level")?.value || "").trim().toUpperCase();
+  if (!LOG_LEVELS.includes(level)) {
+    throw new Error("日志级别无效");
+  }
+
+  const filePath = String(document.getElementById("cfg-file-path")?.value || "").trim();
+  if (!filePath) {
+    throw new Error("日志文件路径不能为空");
+  }
+
+  const maxBytes = Number(document.getElementById("cfg-max-bytes")?.value);
+  if (!Number.isFinite(maxBytes) || maxBytes < 1024) {
+    throw new Error("单文件最大字节数无效");
+  }
+
+  const backupCount = Number(document.getElementById("cfg-backup-count")?.value);
+  if (!Number.isFinite(backupCount) || backupCount < 1 || backupCount > 20) {
+    throw new Error("日志备份数量无效");
+  }
+
+  const consoleEnabled = Boolean(document.getElementById("cfg-console-enabled")?.checked);
+  return {
+    level,
+    file_path: filePath,
+    max_bytes: Math.round(maxBytes),
+    backup_count: Math.round(backupCount),
+    console_enabled: consoleEnabled,
+  };
+}
+
+async function responseDetail(response) {
+  try {
+    const data = await response.json();
+    if (typeof data?.detail === "string" && data.detail.trim()) {
+      return data.detail.trim();
+    }
+    if (typeof data?.error === "string" && data.error.trim()) {
+      return data.error.trim();
+    }
+    return JSON.stringify(data);
+  } catch (_err) {
+    const text = await response.text();
+    return text || `${response.status}`;
+  }
+}
+
+async function loadLoggingConfig() {
+  setConfigStatus("正在加载日志设置...");
+  const response = await fetch("/api/config/logging", { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await responseDetail(response);
+    throw new Error(detail);
+  }
+  const payload = await response.json();
+  const cfg = normalizeLoggingConfig(payload.logging);
+  renderLoggingConfig(cfg);
+  setConfigStatus(`日志设置已加载（${payload.config_path || "config.yaml"}）`, false);
+}
+
+async function saveLoggingConfig() {
+  const cfg = readLoggingConfigFromForm();
+  setConfigStatus("正在保存日志设置...");
+  const response = await fetch("/api/config/logging", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ logging: cfg }),
+  });
+  if (!response.ok) {
+    const detail = await responseDetail(response);
+    throw new Error(detail);
+  }
+  const payload = await response.json();
+  renderLoggingConfig(normalizeLoggingConfig(payload.logging));
+  setConfigStatus(`日志设置已保存（${new Date(payload.saved_at).toLocaleString()}）`, false);
+}
+
 function selectedLevels() {
   const nodes = Array.from(document.querySelectorAll("input.lv:checked"));
   return nodes.map((node) => node.value).join(",");
@@ -140,10 +310,36 @@ let autoRefresh = true;
 let timer = null;
 
 function bindEvents() {
+  const reloadConfigBtn = document.getElementById("reload-config");
+  const saveConfigBtn = document.getElementById("save-config");
   const refreshBtn = document.getElementById("refresh");
   const toggleBtn = document.getElementById("toggle-auto");
   const inputs = Array.from(document.querySelectorAll("input.lv"));
   const perfOnlyNode = document.getElementById("perf-only");
+
+  reloadConfigBtn?.addEventListener("click", async () => {
+    reloadConfigBtn.disabled = true;
+    try {
+      await loadLoggingConfig();
+      await loadLogs();
+    } catch (err) {
+      setConfigStatus(`日志设置加载失败：${String(err.message || err)}`, true);
+    } finally {
+      reloadConfigBtn.disabled = false;
+    }
+  });
+
+  saveConfigBtn?.addEventListener("click", async () => {
+    saveConfigBtn.disabled = true;
+    try {
+      await saveLoggingConfig();
+      await loadLogs();
+    } catch (err) {
+      setConfigStatus(`日志设置保存失败：${String(err.message || err)}`, true);
+    } finally {
+      saveConfigBtn.disabled = false;
+    }
+  });
 
   refreshBtn.addEventListener("click", async () => {
     refreshBtn.disabled = true;
@@ -180,6 +376,11 @@ function bindEvents() {
 
 async function bootstrap() {
   bindEvents();
+  try {
+    await loadLoggingConfig();
+  } catch (err) {
+    setConfigStatus(`日志设置加载失败：${String(err.message || err)}`, true);
+  }
   await loadLogs();
   timer = window.setInterval(async () => {
     if (!autoRefresh) {

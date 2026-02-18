@@ -265,10 +265,22 @@
       </section>
 
       <section id="tab-panel-live" class="tab-panel" data-tab-panel="live" role="tabpanel" aria-labelledby="tab-live">
-        <article class="panel panel-live-reserved">
+        <article class="panel panel-live">
           <div class="panel-head">
-            <h2 data-i18n="tab_live_title">实时监控（预留）</h2>
-            <p data-i18n="tab_live_desc">该模块暂未接入，后续会开放实时视频流与事件看板。</p>
+            <h2 data-i18n="tab_live_title">上传视频实时回看</h2>
+            <p data-i18n="tab_live_desc">在 demo + uploaded_video 模式下，播放当前选中的上传视频。</p>
+          </div>
+          <div class="live-player-wrap">
+            <video
+              id="live-upload-video"
+              class="live-player"
+              controls
+              muted
+              loop
+              playsinline
+              preload="metadata"
+            ></video>
+            <p id="live-upload-status" class="live-status">请先上传并选择视频。</p>
           </div>
         </article>
       </section>

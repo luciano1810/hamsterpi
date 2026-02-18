@@ -61,6 +61,14 @@ body {
   color: #b7d5cf;
 }
 
+.status-ok {
+  color: #9ec5bf;
+}
+
+.status-error {
+  color: #ff8f66;
+}
+
 .settings-grid {
   margin-top: 10px;
 }
@@ -108,6 +116,11 @@ body {
 
 .btn-xs {
   font-size: 13px;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .kpi-grid {

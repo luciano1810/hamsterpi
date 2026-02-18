@@ -18,6 +18,58 @@
 
       <section class="panel panel-wide">
         <div class="panel-head">
+          <h2>日志设置</h2>
+          <p id="logging-config-status">加载中...</p>
+        </div>
+        <div class="settings-grid">
+          <div class="settings-tools">
+            <label for="cfg-level" class="settings-label">日志级别</label>
+            <select id="cfg-level" class="settings-select">
+              <option value="DEBUG">DEBUG</option>
+              <option value="INFO">INFO</option>
+              <option value="WARNING">WARNING</option>
+              <option value="ERROR">ERROR</option>
+              <option value="CRITICAL">CRITICAL</option>
+            </select>
+
+            <label for="cfg-file-path" class="settings-label">日志文件路径</label>
+            <input id="cfg-file-path" class="settings-select" type="text" placeholder="./logs/hamsterpi.log" />
+
+            <label for="cfg-max-bytes" class="settings-label">单文件最大字节数</label>
+            <select id="cfg-max-bytes" class="settings-select">
+              <option value="1048576">1048576 (1MB)</option>
+              <option value="2097152">2097152 (2MB)</option>
+              <option value="5242880">5242880 (5MB)</option>
+              <option value="10485760">10485760 (10MB)</option>
+              <option value="20971520">20971520 (20MB)</option>
+              <option value="52428800">52428800 (50MB)</option>
+            </select>
+
+            <label for="cfg-backup-count" class="settings-label">日志备份数量</label>
+            <select id="cfg-backup-count" class="settings-select">
+              <option value="1">1</option>
+              <option value="3">3</option>
+              <option value="5">5</option>
+              <option value="7">7</option>
+              <option value="10">10</option>
+              <option value="15">15</option>
+              <option value="20">20</option>
+            </select>
+
+            <div class="settings-btns">
+              <label><input type="checkbox" id="cfg-console-enabled" /> 控制台输出</label>
+            </div>
+
+            <div class="settings-btns">
+              <button id="reload-config" class="btn btn-ghost btn-xs">重载日志设置</button>
+              <button id="save-config" class="btn btn-solid btn-xs">保存日志设置</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel panel-wide">
+        <div class="panel-head">
           <h2>筛选器</h2>
           <p id="meta-line">-</p>
         </div>

@@ -298,16 +298,27 @@ html[data-theme="light"] .btn-solid {
   box-shadow: var(--shadow);
 }
 
-.panel-live-reserved {
-  min-height: 280px;
-  display: grid;
-  place-items: center;
+.panel-live {
+  min-height: 320px;
 }
 
-.panel-live-reserved .panel-head {
+.live-player-wrap {
+  display: grid;
+  gap: 10px;
+}
+
+.live-player {
+  width: 100%;
+  max-height: min(68vh, 680px);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #030406;
+}
+
+.live-status {
   margin: 0;
-  text-align: center;
-  max-width: 620px;
+  color: var(--text-soft);
+  font-size: 0.86rem;
 }
 
 .panel-head {

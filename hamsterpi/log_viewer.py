@@ -6,11 +6,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
-from hamsterpi.config import ConfigError, LoggingConfig, default_config_path, load_config
+from hamsterpi.config import (
+    ConfigError,
+    LoggingConfig,
+    SystemConfig,
+    default_config_path,
+    load_config,
+    load_raw_config,
+    save_raw_config,
+)
 from hamsterpi.logging_system import configure_logging, get_logger, level_counts, read_log_records, resolve_log_file
 
 app = FastAPI(title="HamsterPi Log Viewer", version="0.1.0")
@@ -22,12 +31,31 @@ configure_logging(LoggingConfig())
 LOGGER = get_logger(__name__)
 
 
+class LoggingConfigPayload(BaseModel):
+    logging: Dict[str, Any] = Field(default_factory=dict)
+
+
 def _active_logging_config() -> LoggingConfig:
     try:
         cfg = load_config(default_config_path())
         return cfg.logging
     except ConfigError:
         return LoggingConfig()
+
+
+def _read_logging_config_from_raw() -> LoggingConfig:
+    try:
+        raw = load_raw_config(default_config_path())
+    except ConfigError:
+        return LoggingConfig()
+
+    section = raw.get("logging")
+    if isinstance(section, dict):
+        try:
+            return LoggingConfig.model_validate(section)
+        except Exception:  # noqa: BLE001
+            return LoggingConfig()
+    return LoggingConfig()
 
 
 def _parse_levels(levels: str) -> Optional[List[str]]:
@@ -169,6 +197,49 @@ def health() -> Dict[str, str]:
     cfg = _active_logging_config()
     configure_logging(cfg)
     return {"status": "ok", "time": datetime.now().isoformat(), "log_file": str(resolve_log_file(cfg.file_path))}
+
+
+@app.get("/api/config/logging")
+def get_logging_config() -> Dict[str, Any]:
+    cfg = _read_logging_config_from_raw()
+    configure_logging(cfg)
+    return {
+        "config_path": str(default_config_path()),
+        "logging": cfg.model_dump(),
+        "saved_at": datetime.now().isoformat(),
+    }
+
+
+@app.post("/api/config/logging")
+def save_logging_config(payload: LoggingConfigPayload) -> Dict[str, Any]:
+    try:
+        logging_cfg = LoggingConfig.model_validate(payload.logging or {})
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Invalid logging config: {exc}") from exc
+
+    try:
+        raw = load_raw_config(default_config_path())
+    except ConfigError as exc:
+        raise HTTPException(status_code=500, detail=f"Config load failed: {exc}") from exc
+
+    raw["logging"] = logging_cfg.model_dump()
+    try:
+        SystemConfig.model_validate(raw)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Invalid config after update: {exc}") from exc
+
+    save_raw_config(raw, default_config_path())
+    configure_logging(logging_cfg)
+    LOGGER.info(
+        "Log viewer updated logging config",
+        extra={"context": {"config_path": str(default_config_path()), "level": logging_cfg.level}},
+    )
+    return {
+        "status": "ok",
+        "saved_at": datetime.now().isoformat(),
+        "config_path": str(default_config_path()),
+        "logging": logging_cfg.model_dump(),
+    }
 
 
 @app.get("/api/logs")

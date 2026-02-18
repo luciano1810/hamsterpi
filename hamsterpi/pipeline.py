@@ -51,6 +51,7 @@ class HamsterVisionPipeline:
 
         scaled_fence = self._scale_polygon(config.spatial.fence_polygon)
         scaled_wheel_mask = self._scale_polygon(config.spatial.wheel_mask_polygon)
+        self._wheel_polygon = scaled_wheel_mask
         scaled_zones = {name: self._scale_polygon(poly) for name, poly in config.spatial.zones.items()}
         self._spatial_bev_homography, spatial_fence, spatial_zones = self._build_spatial_bev(scaled_fence, scaled_zones)
         self._spatial_bev_enabled = self._spatial_bev_homography is not None
@@ -791,6 +792,69 @@ class HamsterVisionPipeline:
         self._last_frame_ts = timestamp
         return dt
 
+    def _wheel_crop_for_odometer(
+        self,
+        analysis_frame: np.ndarray,
+    ) -> Tuple[np.ndarray, List[int], Optional[List[Tuple[int, int]]]]:
+        frame_h, frame_w = analysis_frame.shape[:2]
+        if frame_w < 2 or frame_h < 2:
+            return analysis_frame, list(self._wheel_roi), list(self._wheel_polygon) if self._wheel_polygon else None
+
+        if self._wheel_polygon and len(self._wheel_polygon) >= 3:
+            polygon_arr = np.array(self._wheel_polygon, dtype=np.int32)
+            x, y, w, h = cv2.boundingRect(polygon_arr)
+        else:
+            x, y, w, h = [int(v) for v in self._wheel_roi]
+
+        x = max(0, min(x, frame_w - 1))
+        y = max(0, min(y, frame_h - 1))
+        w = max(2, min(w, frame_w - x))
+        h = max(2, min(h, frame_h - y))
+
+        margin_x = max(4, int(round(w * 0.16)))
+        margin_y = max(4, int(round(h * 0.16)))
+        x0 = max(0, x - margin_x)
+        y0 = max(0, y - margin_y)
+        x1 = min(frame_w, x + w + margin_x)
+        y1 = min(frame_h, y + h + margin_y)
+        crop_w = max(2, x1 - x0)
+        crop_h = max(2, y1 - y0)
+        if crop_w <= 2 or crop_h <= 2:
+            return analysis_frame, list(self._wheel_roi), list(self._wheel_polygon) if self._wheel_polygon else None
+
+        cropped = analysis_frame[y0:y1, x0:x1]
+        if cropped.size == 0:
+            return analysis_frame, list(self._wheel_roi), list(self._wheel_polygon) if self._wheel_polygon else None
+
+        if self._wheel_polygon and len(self._wheel_polygon) >= 3:
+            local_polygon: List[Tuple[int, int]] = []
+            for px, py in self._wheel_polygon:
+                lx = int(np.clip(int(px) - x0, 0, crop_w - 1))
+                ly = int(np.clip(int(py) - y0, 0, crop_h - 1))
+                local_polygon.append((lx, ly))
+            local_roi = [max(0, x - x0), max(0, y - y0), w, h]
+            return cropped, local_roi, local_polygon
+
+        local_roi = [max(0, x - x0), max(0, y - y0), w, h]
+        return cropped, local_roi, None
+
+    def _update_odometer_on_analysis_frame(
+        self,
+        analysis_frame: np.ndarray,
+        timestamp: datetime,
+    ) -> Dict[str, object]:
+        wheel_frame, wheel_roi, wheel_polygon = self._wheel_crop_for_odometer(analysis_frame)
+        return self.odometer.update(
+            wheel_frame,
+            timestamp,
+            wheel_roi,
+            wheel_polygon=wheel_polygon,
+        ).to_dict()
+
+    def _update_odometer_only(self, frame: np.ndarray, timestamp: datetime) -> None:
+        analysis_frame = self._prepare_frame(frame)
+        self._update_odometer_on_analysis_frame(analysis_frame, timestamp)
+
     def process_frame(
         self,
         frame: np.ndarray,
@@ -819,7 +883,7 @@ class HamsterVisionPipeline:
 
         dt = self._dt_seconds(timestamp)
 
-        odometer_metrics = self.odometer.update(analysis_frame, timestamp, self._wheel_roi).to_dict()
+        odometer_metrics = self._update_odometer_on_analysis_frame(analysis_frame, timestamp)
         spatial_metrics = self.spatial.update(analysis_frame, timestamp, dt).to_dict()
 
         centroid_scaled = tuple(spatial_metrics["centroid"]) if spatial_metrics["centroid"] else None
@@ -928,12 +992,14 @@ class HamsterVisionPipeline:
                 if not ok:
                     break
                 frame = apply_video_orientation(frame, orientation)
+                timestamp = start_time + timedelta(seconds=frame_idx / fps)
 
                 if frame_idx % step != 0:
+                    # Keep wheel odometer at source FPS for better rotation direction/stability.
+                    self._update_odometer_only(frame=frame, timestamp=timestamp)
                     frame_idx += 1
                     continue
 
-                timestamp = start_time + timedelta(seconds=frame_idx / fps)
                 payload = self.process_frame(frame=frame, timestamp=timestamp)
                 video_second = float(frame_idx / max(fps, 1e-6))
                 self._collect_featured_candidate(

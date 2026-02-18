@@ -39,7 +39,20 @@ LOGGER = get_logger(__name__)
 BASE_DIR = Path(__file__).resolve().parent.parent
 WEB_DIR = BASE_DIR / "web"
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".webm"}
+VIDEO_MEDIA_TYPES = {
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+    ".avi": "video/x-msvideo",
+    ".mkv": "video/x-matroska",
+    ".m4v": "video/x-m4v",
+    ".webm": "video/webm",
+}
 PREVIEW_DIR_NAME = ".preview_frames"
+ANALYSIS_CACHE_DIR_NAME = ".analysis_cache"
+ANALYSIS_COMPRESS_PROFILE_VERSION = "v2"
+ANALYSIS_COMPRESS_MIN_SIZE_RATIO = 0.35
+ANALYSIS_COMPRESS_DEFAULT_FPS = 12.0
+WHEEL_ZONE_MIN_RUNNING_STREAK_SECONDS = 1.2
 
 
 @app.middleware("http")
@@ -115,8 +128,57 @@ def _is_allowed_video_file(path: Path) -> bool:
     return path.is_file() and path.suffix.lower() in ALLOWED_VIDEO_EXTENSIONS
 
 
+def _video_media_type(path: Path) -> str:
+    return VIDEO_MEDIA_TYPES.get(path.suffix.lower(), "application/octet-stream")
+
+
 def _resolve_preview_dir(upload_dir: Path) -> Path:
     return upload_dir / PREVIEW_DIR_NAME
+
+
+def _resolve_analysis_cache_dir(upload_dir: Path) -> Path:
+    return upload_dir / ANALYSIS_CACHE_DIR_NAME
+
+
+def _normalize_video_key(name: str, fallback: str = "video", max_len: int = 80) -> str:
+    normalized = "".join(ch if (ch.isalnum() or ch in {"-", "_"}) else "_" for ch in name).strip("_")
+    if not normalized:
+        normalized = fallback
+    return normalized[:max_len]
+
+
+def _analysis_compress_targets(config: SystemConfig) -> tuple[int, int, float]:
+    resolution = str(config.app.demo_analysis_resolution or "1280x720").strip().lower().replace(" ", "")
+    parts = resolution.split("x")
+    width = 1280
+    height = 720
+    if len(parts) == 2:
+        try:
+            width = int(parts[0])
+            height = int(parts[1])
+        except ValueError:
+            width, height = 1280, 720
+    width = max(320, min(width, 3840))
+    height = max(180, min(height, 2160))
+
+    fps = float(config.app.demo_analysis_fps or 15)
+    fps = max(1.0, min(fps, 60.0))
+    return width, height, fps
+
+
+def _analysis_cache_video_path(
+    config: SystemConfig,
+    source_video_path: Path,
+    max_width: int,
+    max_height: int,
+    max_fps: float,
+) -> Path:
+    upload_dir = _resolve_upload_dir(config)
+    cache_dir = _resolve_analysis_cache_dir(upload_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    key = _normalize_video_key(source_video_path.name, fallback="video")
+    fps_key = str(int(round(max_fps)))
+    return cache_dir / f"{key}_{max_width}x{max_height}_{fps_key}fps_{ANALYSIS_COMPRESS_PROFILE_VERSION}.mp4"
 
 
 def _normalize_preview_token(token: str) -> str:
@@ -151,7 +213,9 @@ def _ensure_preview_for_video(config: SystemConfig, video_path: Optional[Path]) 
         except OSError:
             return None
 
-    frame = _read_preview_frame(video_path)
+    frame = _read_uploaded_preview_frame(video_path)
+    if frame is None or frame.size == 0 or _looks_like_black_frame(frame):
+        frame = _read_preview_frame(video_path)
     if frame is None or frame.size == 0 or _looks_like_black_frame(frame):
         return None
 
@@ -362,6 +426,13 @@ def _dashboard_from_pipeline_result(result: Dict[str, Any], config: SystemConfig
     prev_digging_seconds: Optional[int] = None
 
     latest_environment: Optional[Dict[str, Any]] = None
+    canonical_zone_keys = ["wheel_zone", "food_zone", "sand_bath_zone", "hideout_zone", "outside", "unknown"]
+
+    def normalize_zone_key(zone_value: Any) -> str:
+        raw = str(zone_value or "").strip()
+        if raw in {"wheel_zone", "food_zone", "sand_bath_zone", "hideout_zone", "outside"}:
+            return raw
+        return "unknown"
 
     for frame in frames:
         ts = frame.get("timestamp")
@@ -420,6 +491,14 @@ def _dashboard_from_pipeline_result(result: Dict[str, Any], config: SystemConfig
             x, y = float(centroid[0]), float(centroid[1])
 
         zone = spatial.get("in_zone")
+        running_streak_s = float(odometer.get("running_streak_s", 0.0))
+        escape_now = bool(spatial.get("escape_detected", False))
+        if escape_now:
+            zone = "outside"
+        elif running and running_streak_s >= WHEEL_ZONE_MIN_RUNNING_STREAK_SECONDS:
+            zone = "wheel_zone"
+        else:
+            zone = normalize_zone_key(zone)
 
         grooming_total = int(behavior.get("grooming_count", 0))
         digging_seconds_total = int(behavior.get("digging_seconds", 0.0))
@@ -454,7 +533,7 @@ def _dashboard_from_pipeline_result(result: Dict[str, Any], config: SystemConfig
                     }
                 )
 
-        if bool(spatial.get("escape_detected", False)):
+        if escape_now:
             alerts.append(
                 {
                     "timestamp": ts,
@@ -561,8 +640,50 @@ def _dashboard_from_pipeline_result(result: Dict[str, Any], config: SystemConfig
     max_running_streak = max((item["running_streak_min"] for item in timeseries), default=0.0)
 
     spatial_summary = summary.get("spatial", {})
-    zone_dwell_seconds = summary.get("zone_dwell", spatial_summary.get("zone_dwell_seconds", {}))
-    zone_ratio = spatial_summary.get("zone_ratio", {})
+    computed_zone_dwell_seconds = {key: 0.0 for key in canonical_zone_keys}
+    if len(timeseries) >= 2:
+        for idx in range(len(timeseries) - 1):
+            current = timeseries[idx]
+            nxt = timeseries[idx + 1]
+            ts_curr = current.get("timestamp")
+            ts_next = nxt.get("timestamp")
+            if not ts_curr or not ts_next:
+                continue
+            try:
+                dt_seconds = max(
+                    0.0,
+                    (datetime.fromisoformat(str(ts_next)) - datetime.fromisoformat(str(ts_curr))).total_seconds(),
+                )
+            except ValueError:
+                dt_seconds = 0.0
+            if dt_seconds <= 0.0:
+                continue
+            zone_key = normalize_zone_key(current.get("zone"))
+            computed_zone_dwell_seconds[zone_key] += dt_seconds
+
+    computed_total_dwell = float(sum(computed_zone_dwell_seconds.values()))
+    if computed_total_dwell <= 1e-6:
+        summary_zone_dwell = summary.get("zone_dwell", spatial_summary.get("zone_dwell_seconds", {}))
+        if isinstance(summary_zone_dwell, dict):
+            for key, value in summary_zone_dwell.items():
+                zone_key = normalize_zone_key(key)
+                try:
+                    computed_zone_dwell_seconds[zone_key] += max(0.0, float(value))
+                except (TypeError, ValueError):
+                    continue
+        computed_total_dwell = float(sum(computed_zone_dwell_seconds.values()))
+
+    zone_dwell_seconds = {
+        key: round(float(value), 3)
+        for key, value in computed_zone_dwell_seconds.items()
+    }
+    if computed_total_dwell > 1e-6:
+        zone_ratio = {
+            key: round(float(zone_dwell_seconds[key] / computed_total_dwell), 6)
+            for key in canonical_zone_keys
+        }
+    else:
+        zone_ratio = {key: 0.0 for key in canonical_zone_keys}
 
     heatmap = summary.get("heatmap")
     if not heatmap:
@@ -580,6 +701,20 @@ def _dashboard_from_pipeline_result(result: Dict[str, Any], config: SystemConfig
             for item in timeseries
             if item["x"] is not None and item["y"] is not None
         ]
+    else:
+        zone_by_timestamp = {
+            str(item.get("timestamp", "")): normalize_zone_key(item.get("zone"))
+            for item in timeseries
+        }
+        enriched_trajectory: List[Dict[str, Any]] = []
+        for point in trajectory:
+            if not isinstance(point, dict):
+                continue
+            copied = dict(point)
+            ts_key = str(copied.get("timestamp", ""))
+            copied["zone"] = zone_by_timestamp.get(ts_key, normalize_zone_key(copied.get("zone")))
+            enriched_trajectory.append(copied)
+        trajectory = enriched_trajectory
 
     odometer_hourly = [
         {
@@ -953,9 +1088,34 @@ class DashboardState:
         if limit is None:
             limit = max(300, self.config.runtime.max_frame_results * self.config.runtime.process_every_nth_frame)
 
+        source_video_path = self.uploaded_video_path
+        analysis_video_path = source_video_path
+        analysis_prepare: Dict[str, Any] = {
+            "cached": False,
+            "profile": "original",
+            "source_size": 0,
+            "compressed_size": 0,
+            "size_ratio": 1.0,
+        }
+        try:
+            analysis_prepare = _prepare_uploaded_video_for_analysis(self.config, source_video_path)
+            prepared_path = analysis_prepare.get("path")
+            if isinstance(prepared_path, Path) and prepared_path.exists():
+                analysis_video_path = prepared_path
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning(
+                "Uploaded video compression before analysis failed; fallback to original",
+                extra={
+                    "context": {
+                        "source_path": str(source_video_path),
+                        "error": str(exc),
+                    }
+                },
+            )
+
         pipeline = HamsterVisionPipeline(self.config, always_analyze=True)
-        result = pipeline.process_video(self.uploaded_video_path, max_frames=limit)
-        payload = _dashboard_from_pipeline_result(result, self.config, self.uploaded_video_name or self.uploaded_video_path.name)
+        result = pipeline.process_video(analysis_video_path, max_frames=limit)
+        payload = _dashboard_from_pipeline_result(result, self.config, self.uploaded_video_name or source_video_path.name)
 
         summary = result.get("summary", {})
         featured_candidates_raw = summary.get("featured_photo_candidates")
@@ -979,9 +1139,13 @@ class DashboardState:
             "Uploaded video analyzed",
             extra={
                 "context": {
-                    "path": str(self.uploaded_video_path),
+                    "source_path": str(source_video_path),
+                    "analysis_path": str(analysis_video_path),
                     "display_name": self.uploaded_video_name,
                     "max_frames": limit,
+                    "compression_cached": bool(analysis_prepare.get("cached", False)),
+                    "compression_profile": str(analysis_prepare.get("profile", "original")),
+                    "compression_ratio": round(float(analysis_prepare.get("size_ratio", 1.0)), 4),
                     "summary": payload.get("summary", {}),
                 }
             },
@@ -992,10 +1156,14 @@ class DashboardState:
                 "context": {
                     "is_perf": True,
                     "perf_category": "dashboard",
-                    "path": str(self.uploaded_video_path),
+                    "source_path": str(source_video_path),
+                    "analysis_path": str(analysis_video_path),
                     "display_name": self.uploaded_video_name,
                     "max_frames": limit,
                     "elapsed_ms": round(float(elapsed_ms), 3),
+                    "compression_cached": bool(analysis_prepare.get("cached", False)),
+                    "compression_profile": str(analysis_prepare.get("profile", "original")),
+                    "compression_ratio": round(float(analysis_prepare.get("size_ratio", 1.0)), 4),
                     "analysis_processed_count": int(summary.get("processed_count", 0)),
                     "analysis_analyzed_count": int(summary.get("analyzed_count", 0)),
                     "analysis_skipped_count": int(summary.get("skipped_count", 0)),
@@ -1130,6 +1298,30 @@ def _looks_like_black_frame(frame: np.ndarray) -> bool:
     return float(mean[0][0]) < 3.0 and float(std[0][0]) < 3.0 and max_v < 18.0
 
 
+def _read_uploaded_preview_frame(video_path: Path, max_probe_frames: int = 90) -> Optional[np.ndarray]:
+    """Prefer the earliest usable frame to keep upload preview as true first-frame context."""
+    cap, orientation = open_video_capture(video_path)
+    first_frame: Optional[np.ndarray] = None
+    probed = 0
+
+    try:
+        while probed < max_probe_frames:
+            ok, raw = cap.read()
+            if not ok or raw is None or raw.size == 0:
+                break
+            raw = apply_video_orientation(raw, orientation)
+            probed += 1
+
+            if first_frame is None:
+                first_frame = raw.copy()
+            if not _looks_like_black_frame(raw):
+                return raw
+    finally:
+        cap.release()
+
+    return first_frame
+
+
 def _read_preview_frame(video_path: Path, max_probe_frames: int = 90) -> Optional[np.ndarray]:
     cap, orientation = open_video_capture(video_path)
     best_frame: Optional[np.ndarray] = None
@@ -1180,6 +1372,209 @@ def _read_preview_image(image_path: Path) -> Optional[np.ndarray]:
     if frame is None or frame.size == 0:
         return None
     return frame
+
+
+def _even_size(value: int) -> int:
+    normalized = max(2, int(value))
+    if normalized % 2 == 0:
+        return normalized
+    return normalized - 1 if normalized > 2 else 2
+
+
+def _video_is_decodable(path: Path) -> bool:
+    cap = cv2.VideoCapture(str(path))
+    if not cap.isOpened():
+        cap.release()
+        return False
+    ok, frame = cap.read()
+    cap.release()
+    return bool(ok and frame is not None and frame.size > 0)
+
+
+def _compress_video_for_analysis(
+    source_video_path: Path,
+    target_video_path: Path,
+    *,
+    max_width: int,
+    max_height: int,
+    max_fps: float,
+) -> Dict[str, Any]:
+    cap, orientation = open_video_capture(source_video_path)
+    writer: Optional[cv2.VideoWriter] = None
+    temp_target = target_video_path.with_name(
+        f".tmp_{target_video_path.stem}_{int(time.time() * 1000)}.mp4"
+    )
+    try:
+        source_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        ok, raw = cap.read()
+        if not ok or raw is None or raw.size == 0:
+            raise RuntimeError("failed to decode uploaded video")
+        first_frame = apply_video_orientation(raw, orientation)
+
+        source_h, source_w = first_frame.shape[:2]
+        scale = min(
+            1.0,
+            max_width / max(source_w, 1),
+            max_height / max(source_h, 1),
+        )
+        target_w = _even_size(round(source_w * scale))
+        target_h = _even_size(round(source_h * scale))
+
+        step = 1
+        if source_fps > 0 and max_fps > 0 and source_fps > max_fps:
+            step = max(1, int(round(source_fps / max_fps)))
+
+        output_fps = source_fps / step if source_fps > 0 else ANALYSIS_COMPRESS_DEFAULT_FPS
+        if max_fps > 0:
+            output_fps = min(output_fps, max_fps)
+        output_fps = max(1.0, output_fps)
+
+        target_video_path.parent.mkdir(parents=True, exist_ok=True)
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(temp_target), fourcc, output_fps, (target_w, target_h))
+        if not writer.isOpened():
+            raise RuntimeError("failed to open analysis video writer")
+
+        read_frames = 1
+        written_frames = 0
+        frame_idx = 0
+
+        def maybe_write(frame: np.ndarray, idx: int) -> int:
+            if idx % step != 0:
+                return 0
+            if frame.shape[1] != target_w or frame.shape[0] != target_h:
+                frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
+            writer.write(frame)
+            return 1
+
+        written_frames += maybe_write(first_frame, frame_idx)
+        frame_idx += 1
+
+        while True:
+            ok, raw = cap.read()
+            if not ok or raw is None or raw.size == 0:
+                break
+            read_frames += 1
+            frame = apply_video_orientation(raw, orientation)
+            written_frames += maybe_write(frame, frame_idx)
+            frame_idx += 1
+
+        if written_frames <= 0:
+            raise RuntimeError("analysis compression wrote zero frames")
+
+        try:
+            compressed_size = int(temp_target.stat().st_size)
+        except OSError as exc:
+            raise RuntimeError("failed to persist compressed analysis video") from exc
+        if compressed_size <= 0:
+            raise RuntimeError("compressed analysis video is empty")
+
+        if target_video_path.exists():
+            try:
+                target_video_path.unlink()
+            except OSError:
+                pass
+        temp_target.replace(target_video_path)
+
+        try:
+            source_size = int(source_video_path.stat().st_size)
+        except OSError:
+            source_size = 0
+        try:
+            compressed_size = int(target_video_path.stat().st_size)
+        except OSError:
+            compressed_size = 0
+
+        return {
+            "source_width": int(source_w),
+            "source_height": int(source_h),
+            "target_width": int(target_w),
+            "target_height": int(target_h),
+            "source_fps": float(round(source_fps, 3)),
+            "target_fps": float(round(output_fps, 3)),
+            "frame_step": int(step),
+            "read_frames": int(read_frames),
+            "written_frames": int(written_frames),
+            "source_size": int(source_size),
+            "compressed_size": int(compressed_size),
+            "size_ratio": float(compressed_size / max(source_size, 1)),
+        }
+    except Exception:
+        if temp_target.exists():
+            try:
+                temp_target.unlink()
+            except OSError:
+                pass
+        raise
+    finally:
+        cap.release()
+        if writer is not None:
+            writer.release()
+
+
+def _prepare_uploaded_video_for_analysis(config: SystemConfig, source_video_path: Path) -> Dict[str, Any]:
+    if not source_video_path.exists():
+        raise RuntimeError("uploaded video not found")
+
+    max_width, max_height, max_fps = _analysis_compress_targets(config)
+    target_video_path = _analysis_cache_video_path(
+        config,
+        source_video_path,
+        max_width=max_width,
+        max_height=max_height,
+        max_fps=max_fps,
+    )
+    source_stat = source_video_path.stat()
+
+    if target_video_path.exists():
+        try:
+            target_stat = target_video_path.stat()
+        except OSError:
+            target_stat = None
+        if (
+            target_stat is not None
+            and target_stat.st_size > 0
+            and target_stat.st_mtime >= source_stat.st_mtime
+            and _video_is_decodable(target_video_path)
+        ):
+            return {
+                "path": target_video_path,
+                "cached": True,
+                "profile": "cached",
+                "target_width": int(max_width),
+                "target_height": int(max_height),
+                "target_fps": float(round(max_fps, 3)),
+                "source_size": int(source_stat.st_size),
+                "compressed_size": int(target_stat.st_size),
+                "size_ratio": float(target_stat.st_size / max(int(source_stat.st_size), 1)),
+            }
+
+    stats = _compress_video_for_analysis(
+        source_video_path,
+        target_video_path,
+        max_width=max_width,
+        max_height=max_height,
+        max_fps=max_fps,
+    )
+    if float(stats.get("size_ratio", 1.0)) < ANALYSIS_COMPRESS_MIN_SIZE_RATIO:
+        LOGGER.warning(
+            "Analysis compression ratio is lower than recommended",
+            extra={
+                "context": {
+                    "source_path": str(source_video_path),
+                    "target_path": str(target_video_path),
+                    "ratio": round(float(stats.get("size_ratio", 1.0)), 4),
+                    "recommended_min_ratio": ANALYSIS_COMPRESS_MIN_SIZE_RATIO,
+                    "configured_resolution": f"{max_width}x{max_height}",
+                    "configured_fps": max_fps,
+                }
+            },
+        )
+
+    stats["path"] = target_video_path
+    stats["cached"] = False
+    stats["profile"] = "config"
+    return stats
 
 
 def _load_preview_frame(
@@ -1471,6 +1866,46 @@ def demo_status() -> Dict[str, Any]:
             "zone_required": dashboard_state.uploaded_zone_required,
             "uploaded_videos": uploaded_videos,
         }
+
+
+@app.get("/api/demo/live-video")
+def demo_live_video(video_key: str = Query(default="", max_length=255)) -> FileResponse:
+    with dashboard_state.lock:
+        cfg = dashboard_state.config
+        if cfg.app.run_mode != "demo":
+            raise HTTPException(status_code=400, detail="Live video is only available in demo mode")
+        if cfg.app.demo_source != "uploaded_video":
+            raise HTTPException(status_code=400, detail="Set demo_source to uploaded_video first")
+
+        upload_dir = _resolve_upload_dir(cfg)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        upload_root = upload_dir.resolve()
+        target: Optional[Path] = dashboard_state.uploaded_video_path
+        if video_key:
+            safe_key = Path(video_key).name
+            if safe_key != video_key:
+                raise HTTPException(status_code=400, detail="Invalid video key")
+            target = upload_dir / safe_key
+
+        if target is None:
+            raise HTTPException(status_code=404, detail="No uploaded video")
+        if not target.exists() or not target.is_file():
+            raise HTTPException(status_code=404, detail="Uploaded video not found")
+        if target.suffix.lower() not in ALLOWED_VIDEO_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"Unsupported file extension: {target.suffix.lower()}")
+
+        try:
+            resolved_target = target.resolve()
+        except OSError as exc:
+            raise HTTPException(status_code=404, detail="Uploaded video not found") from exc
+        if upload_root not in resolved_target.parents and resolved_target != upload_root:
+            raise HTTPException(status_code=400, detail="Invalid uploaded video path")
+
+        return FileResponse(
+            path=resolved_target,
+            media_type=_video_media_type(resolved_target),
+            filename=resolved_target.name,
+        )
 
 
 @app.post("/api/demo/upload-preview")
