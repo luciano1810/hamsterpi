@@ -43,12 +43,13 @@ class VirtualOdometer:
             (np.array(lower, dtype=np.uint8), np.array(upper, dtype=np.uint8))
             for lower, upper in marker_hsv_ranges
         ]
+        self._wheel_circumference_m = math.pi * (self.wheel_diameter_cm / 100.0)
         self._previous_timestamp: Optional[datetime] = None
         self._previous_angle: Optional[float] = None
         self._previous_running = False
         self._running_streak_s = 0.0
         self._total_revolutions = 0.0
-        self._state_switches: Deque[datetime] = deque(maxlen=180)
+        self._state_switches: Deque[float] = deque(maxlen=180)
         self._texture_prev_gray: Optional[np.ndarray] = None
 
     @staticmethod
@@ -73,7 +74,7 @@ class VirtualOdometer:
         mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
 
         for lower, upper in self.marker_hsv_ranges:
-            mask = cv2.bitwise_or(mask, cv2.inRange(hsv, lower, upper))
+            cv2.bitwise_or(mask, cv2.inRange(hsv, lower, upper), dst=mask)
 
         mask = cv2.medianBlur(mask, 5)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -165,10 +166,10 @@ class VirtualOdometer:
             self._running_streak_s = 0.0
 
         if running != self._previous_running:
-            self._state_switches.append(timestamp)
+            self._state_switches.append(timestamp.timestamp())
 
         cutoff = timestamp.timestamp() - 60.0
-        while self._state_switches and self._state_switches[0].timestamp() < cutoff:
+        while self._state_switches and self._state_switches[0] < cutoff:
             self._state_switches.popleft()
 
         self._previous_running = running
@@ -190,10 +191,8 @@ class VirtualOdometer:
         )
 
     def _distance_from_revolutions(self, revolutions: float) -> float:
-        circumference_m = math.pi * (self.wheel_diameter_cm / 100.0)
-        return abs(revolutions) * circumference_m
+        return abs(revolutions) * self._wheel_circumference_m
 
     def _speed_from_delta(self, revolutions_delta: float, dt_seconds: float) -> float:
-        circumference_m = math.pi * (self.wheel_diameter_cm / 100.0)
-        meters_per_second = abs(revolutions_delta) * circumference_m / dt_seconds
+        meters_per_second = abs(revolutions_delta) * self._wheel_circumference_m / dt_seconds
         return meters_per_second * 3.6

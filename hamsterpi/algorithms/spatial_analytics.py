@@ -91,6 +91,9 @@ class SpatialAnalyzer:
             cv2.fillPoly(self._motion_fence_mask, [self.motion_fence_polygon], 255)
         else:
             self._motion_fence_mask[:, :] = 255
+        self._wheel_mask_polygons = [self.wheel_mask_polygon] if len(self.wheel_mask_polygon) >= 3 else []
+        self._open_kernel_3 = np.ones((3, 3), np.uint8)
+        self._close_kernel_5 = np.ones((5, 5), np.uint8)
 
     @staticmethod
     def _find_contours(mask: np.ndarray) -> List[np.ndarray]:
@@ -179,11 +182,11 @@ class SpatialAnalyzer:
         fg = self._bg.apply(frame)
         fg = cv2.medianBlur(fg, 5)
         _, fg = cv2.threshold(fg, 190, 255, cv2.THRESH_BINARY)
-        fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8), iterations=1)
-        fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8), iterations=1)
-        fg = cv2.bitwise_and(fg, self._motion_fence_mask)
-        if len(self.wheel_mask_polygon) >= 3:
-            cv2.fillPoly(fg, [self.wheel_mask_polygon], 0)
+        cv2.morphologyEx(fg, cv2.MORPH_OPEN, self._open_kernel_3, dst=fg, iterations=1)
+        cv2.morphologyEx(fg, cv2.MORPH_CLOSE, self._close_kernel_5, dst=fg, iterations=1)
+        cv2.bitwise_and(fg, self._motion_fence_mask, dst=fg)
+        if self._wheel_mask_polygons:
+            cv2.fillPoly(fg, self._wheel_mask_polygons, 0)
         return fg
 
     def update(self, frame: np.ndarray, timestamp: datetime, dt_seconds: float) -> SpatialMetrics:

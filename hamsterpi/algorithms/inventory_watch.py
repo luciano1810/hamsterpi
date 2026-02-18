@@ -40,6 +40,7 @@ class InventoryWatcher:
         self.low_food_threshold = low_food_threshold
         self._baseline_gnaw_patch: Optional[np.ndarray] = None
         self._hoard_map = np.zeros(frame_shape, dtype=np.float32)
+        self._grain_open_kernel = np.ones((3, 3), np.uint8)
 
     @staticmethod
     def _crop(frame: np.ndarray, roi: Sequence[int]) -> np.ndarray:
@@ -75,7 +76,7 @@ class InventoryWatcher:
         val = hsv[:, :, 2]
 
         grain_like = ((sat > 40) & (val > 45)).astype(np.uint8) * 255
-        grain_like = cv2.morphologyEx(grain_like, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8), iterations=1)
+        grain_like = cv2.morphologyEx(grain_like, cv2.MORPH_OPEN, self._grain_open_kernel, iterations=1)
         return self._clamp(float(np.count_nonzero(grain_like)) / float(grain_like.size))
 
     def _estimate_gnaw_wear(self, frame: np.ndarray) -> float:
@@ -100,7 +101,7 @@ class InventoryWatcher:
             if 0 <= y < self._hoard_map.shape[0] and 0 <= x < self._hoard_map.shape[1]:
                 self._hoard_map[y, x] += 1.0
 
-        self._hoard_map = cv2.GaussianBlur(self._hoard_map, (11, 11), 0)
+        cv2.GaussianBlur(self._hoard_map, (11, 11), 0, dst=self._hoard_map)
 
     def _top_hoard_hotspots(self, top_k: int = 3) -> List[dict]:
         if float(np.max(self._hoard_map)) <= 0.0:

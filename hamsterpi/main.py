@@ -935,6 +935,7 @@ class DashboardState:
         )
 
     def analyze_uploaded_video(self, max_frames: Optional[int] = None) -> Dict[str, Any]:
+        perf_started = time.perf_counter()
         self.activate_uploaded_demo_source()
         if self.uploaded_video_path is None or not self.uploaded_video_path.exists():
             payload = _empty_dashboard_payload(
@@ -973,6 +974,7 @@ class DashboardState:
         self.uploaded_analyzed_at = datetime.now()
         self._refresh_featured_selection()
         self.last_update = datetime.now()
+        elapsed_ms = (time.perf_counter() - perf_started) * 1000.0
         LOGGER.info(
             "Uploaded video analyzed",
             extra={
@@ -981,6 +983,24 @@ class DashboardState:
                     "display_name": self.uploaded_video_name,
                     "max_frames": limit,
                     "summary": payload.get("summary", {}),
+                }
+            },
+        )
+        LOGGER.info(
+            "[PERF] analyze_uploaded_video",
+            extra={
+                "context": {
+                    "is_perf": True,
+                    "perf_category": "dashboard",
+                    "path": str(self.uploaded_video_path),
+                    "display_name": self.uploaded_video_name,
+                    "max_frames": limit,
+                    "elapsed_ms": round(float(elapsed_ms), 3),
+                    "analysis_processed_count": int(summary.get("processed_count", 0)),
+                    "analysis_analyzed_count": int(summary.get("analyzed_count", 0)),
+                    "analysis_skipped_count": int(summary.get("skipped_count", 0)),
+                    "analysis_source_fps": float(summary.get("source_fps", 0.0)),
+                    "analysis_frame_step": int(summary.get("frame_step", 0)),
                 }
             },
         )

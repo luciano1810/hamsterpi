@@ -31,6 +31,7 @@ class VisualHealthScanner:
     def __init__(self, baseline_body_area_px: int, vlm_config: Any) -> None:
         self.baseline_body_area_px = baseline_body_area_px
         self.vlm_config = vlm_config
+        self._close_kernel_5 = np.ones((5, 5), np.uint8)
 
     @staticmethod
     def _encode_image_b64(image: np.ndarray) -> str:
@@ -55,7 +56,7 @@ class VisualHealthScanner:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
         _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8), iterations=2)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, self._close_kernel_5, iterations=2)
 
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:

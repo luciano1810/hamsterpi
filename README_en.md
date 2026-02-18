@@ -152,6 +152,7 @@ Mapping preview behavior:
 Log viewer APIs (`8002`):
 
 - `GET /api/logs?levels=INFO,ERROR&q=keyword&limit=500`
+- `GET /api/logs?levels=INFO,ERROR&q=keyword&limit=500&perf_only=true`
 - `GET /health`
 
 ## Logging

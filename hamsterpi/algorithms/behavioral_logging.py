@@ -37,7 +37,7 @@ class BehavioralLogger:
         self._grooming_count = 0
         self._digging_seconds = 0.0
 
-        self._recent_stereotypy_events: Deque[datetime] = deque(maxlen=180)
+        self._recent_stereotypy_events: Deque[float] = deque(maxlen=180)
         self._last_grooming_ts: Optional[datetime] = None
         self._recent_path: Deque[Point] = deque(maxlen=200)
 
@@ -70,11 +70,12 @@ class BehavioralLogger:
             repetitive_path = variance < 1800.0
 
         detected = explicit or repetitive_path
+        ts_epoch = ts.timestamp()
         if detected:
-            self._recent_stereotypy_events.append(ts)
+            self._recent_stereotypy_events.append(ts_epoch)
 
-        cutoff = ts.timestamp() - 3600.0
-        while self._recent_stereotypy_events and self._recent_stereotypy_events[0].timestamp() < cutoff:
+        cutoff = ts_epoch - 3600.0
+        while self._recent_stereotypy_events and self._recent_stereotypy_events[0] < cutoff:
             self._recent_stereotypy_events.popleft()
 
         return detected

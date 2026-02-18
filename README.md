@@ -152,6 +152,7 @@ uvicorn hamsterpi.log_viewer:app --host 0.0.0.0 --port 8002
 日志服务（8002）：
 
 - `GET /api/logs?levels=INFO,ERROR&q=keyword&limit=500`
+- `GET /api/logs?levels=INFO,ERROR&q=keyword&limit=500&perf_only=true`
 - `GET /health`
 
 ## 日志

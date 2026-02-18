@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import time
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -124,6 +125,7 @@ class HamsterVisionPipeline:
         self._frame_index = 0
         self._featured_candidates: List[Dict[str, Any]] = []
         self._featured_candidate_limit = 42
+        self._analysis_frame_buffer: Optional[np.ndarray] = None
 
     @staticmethod
     def _order_quad(points: np.ndarray) -> np.ndarray:
@@ -426,7 +428,19 @@ class HamsterVisionPipeline:
     def _prepare_frame(self, frame: np.ndarray) -> np.ndarray:
         if frame.shape[1] == self.analysis_width and frame.shape[0] == self.analysis_height:
             return frame
-        return cv2.resize(frame, (self.analysis_width, self.analysis_height), interpolation=cv2.INTER_AREA)
+        target_shape = (self.analysis_height, self.analysis_width, *frame.shape[2:])
+        if (
+            self._analysis_frame_buffer is None
+            or self._analysis_frame_buffer.shape != target_shape
+            or self._analysis_frame_buffer.dtype != frame.dtype
+        ):
+            self._analysis_frame_buffer = np.empty(target_shape, dtype=frame.dtype)
+        return cv2.resize(
+            frame,
+            (self.analysis_width, self.analysis_height),
+            dst=self._analysis_frame_buffer,
+            interpolation=cv2.INTER_AREA,
+        )
 
     def _analysis_to_camera_point(self, point: Tuple[float, float]) -> Optional[Tuple[float, float]]:
         if not self._spatial_bev_enabled or self._spatial_bev_inverse_homography is None:
@@ -883,6 +897,7 @@ class HamsterVisionPipeline:
         video_path: str | Path,
         max_frames: Optional[int] = None,
     ) -> Dict[str, object]:
+        wall_start = time.perf_counter()
         LOGGER.info(
             "Pipeline process_video started",
             extra={"context": {"video_path": str(video_path), "max_frames": max_frames}},
@@ -920,10 +935,11 @@ class HamsterVisionPipeline:
 
                 timestamp = start_time + timedelta(seconds=frame_idx / fps)
                 payload = self.process_frame(frame=frame, timestamp=timestamp)
+                video_second = float(frame_idx / max(fps, 1e-6))
                 self._collect_featured_candidate(
                     frame=frame,
                     payload=payload,
-                    video_second=float(frame_idx / max(fps, 1e-6)),
+                    video_second=video_second,
                 )
 
                 processed_count += 1
@@ -952,6 +968,12 @@ class HamsterVisionPipeline:
         if self.config.runtime.low_memory_mode and len(trajectory) > max_items:
             trajectory = trajectory[-max_items:]
 
+        total_elapsed_s = max(time.perf_counter() - wall_start, 1e-9)
+        total_elapsed_ms = total_elapsed_s * 1000.0
+        processed_fps = processed_count / total_elapsed_s
+        analyzed_fps = analyzed_count / total_elapsed_s
+        avg_frame_ms = total_elapsed_ms / max(processed_count, 1)
+
         LOGGER.info(
             "Pipeline process_video completed",
             extra={
@@ -965,6 +987,26 @@ class HamsterVisionPipeline:
                     "processed_count": processed_count,
                     "analyzed_count": analyzed_count,
                     "skipped_count": skipped_count,
+                }
+            },
+        )
+        LOGGER.info(
+            "[PERF] process_video",
+            extra={
+                "context": {
+                    "is_perf": True,
+                    "perf_category": "pipeline",
+                    "video_path": str(video_path),
+                    "max_frames": max_frames,
+                    "processed_count": processed_count,
+                    "analyzed_count": analyzed_count,
+                    "skipped_count": skipped_count,
+                    "elapsed_ms": round(float(total_elapsed_ms), 3),
+                    "avg_frame_ms": round(float(avg_frame_ms), 3),
+                    "processed_fps": round(float(processed_fps), 3),
+                    "analyzed_fps": round(float(analyzed_fps), 3),
+                    "frame_step": step,
+                    "source_fps": round(float(fps), 3),
                 }
             },
         )

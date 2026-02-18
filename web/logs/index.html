@@ -44,6 +44,10 @@
             </select>
 
             <div class="settings-btns">
+              <label><input type="checkbox" id="perf-only" /> 仅性能日志</label>
+            </div>
+
+            <div class="settings-btns">
               <button id="refresh" class="btn btn-solid btn-xs">刷新</button>
               <button id="toggle-auto" class="btn btn-ghost btn-xs">自动刷新：开</button>
             </div>
@@ -52,6 +56,14 @@
       </section>
 
       <section class="kpi-grid" id="kpi-grid"></section>
+
+      <section class="panel panel-wide">
+        <div class="panel-head">
+          <h2>性能摘要</h2>
+          <p id="perf-status-line">-</p>
+        </div>
+        <section class="kpi-grid" id="perf-kpi-grid"></section>
+      </section>
 
       <section class="panel panel-wide">
         <div class="panel-head">

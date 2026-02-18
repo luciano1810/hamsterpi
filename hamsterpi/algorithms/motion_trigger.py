@@ -65,14 +65,27 @@ class MotionTriggeredRecorder:
         self._writer: Optional[cv2.VideoWriter] = None
         self._current_clip_path = ""
         self._segments: List[dict] = []
+        self._open_kernel_3 = np.ones((3, 3), np.uint8)
+        self._cached_input_size: Optional[tuple[int, int]] = None
+        self._cached_target_size: Optional[tuple[int, int]] = None
 
     def _preprocess(self, frame: np.ndarray) -> np.ndarray:
         h, w = frame.shape[:2]
-        target_w = min(self.downscale_width, w)
-        target_h = max(1, int(h * target_w / max(w, 1)))
-        resized = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        input_size = (w, h)
+        if input_size != self._cached_input_size:
+            target_w = min(self.downscale_width, w)
+            target_h = max(1, int(h * target_w / max(w, 1)))
+            self._cached_input_size = input_size
+            self._cached_target_size = (target_w, target_h)
+        target_size = self._cached_target_size
+        if target_size is None:
+            target_w = min(self.downscale_width, w)
+            target_h = max(1, int(h * target_w / max(w, 1)))
+            target_size = (target_w, target_h)
+        resized = cv2.resize(frame, target_size, interpolation=cv2.INTER_AREA)
         gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-        return cv2.GaussianBlur(gray, (self.blur_kernel, self.blur_kernel), 0)
+        cv2.GaussianBlur(gray, (self.blur_kernel, self.blur_kernel), 0, dst=gray)
+        return gray
 
     def _start_capture(self, frame: np.ndarray, timestamp: datetime) -> None:
         self._capture_active = True
@@ -126,7 +139,7 @@ class MotionTriggeredRecorder:
 
         diff = cv2.absdiff(self._prev_gray, processed)
         _, mask = cv2.threshold(diff, self.diff_threshold, 255, cv2.THRESH_BINARY)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8), iterations=1)
+        cv2.morphologyEx(mask, cv2.MORPH_OPEN, self._open_kernel_3, dst=mask, iterations=1)
         motion_pixels = int(np.count_nonzero(mask))
         motion_ratio = float(motion_pixels) / float(mask.size)
         is_motion = motion_ratio >= self.min_motion_ratio

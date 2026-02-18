@@ -29,6 +29,35 @@ function levelKpi(level, count) {
   `;
 }
 
+function metricKpi(name, value, hint, color = "#d9e8e4") {
+  return `
+    <article class="kpi-card" style="animation-delay:0s">
+      <p class="kpi-name">${escapeHtml(name)}</p>
+      <p class="kpi-value" style="color:${color}">${escapeHtml(value)}</p>
+      <p class="kpi-hint">${escapeHtml(hint || "")}</p>
+    </article>
+  `;
+}
+
+function formatNumber(value, digits = 2) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return "-";
+  }
+  return numeric.toFixed(digits);
+}
+
+function formatMs(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return "-";
+  }
+  if (numeric >= 1000) {
+    return `${(numeric / 1000).toFixed(2)} s`;
+  }
+  return `${numeric.toFixed(1)} ms`;
+}
+
 function buildMessage(item) {
   const base = item.message || "";
   const context = item.context ? `\ncontext=${JSON.stringify(item.context)}` : "";
@@ -42,6 +71,10 @@ function renderLogs(payload) {
   const status = document.getElementById("status-line");
   const meta = document.getElementById("meta-line");
   const kpi = document.getElementById("kpi-grid");
+  const perfKpiGrid = document.getElementById("perf-kpi-grid");
+  const perfStatus = document.getElementById("perf-status-line");
+  const perf = payload.performance || {};
+  const perfOnly = Boolean(perf.filter_enabled);
 
   const counts = payload.counts || {};
   kpi.innerHTML = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -49,7 +82,23 @@ function renderLogs(payload) {
     .join("");
 
   meta.textContent = `日志文件：${payload.log_file || "-"} | 默认级别：${payload.default_level || "-"}`;
-  status.textContent = `返回 ${payload.count || 0} 条，更新时间 ${new Date(payload.generated_at).toLocaleString()}`;
+  status.textContent = `返回 ${payload.count || 0} 条，更新时间 ${new Date(payload.generated_at).toLocaleString()}${perfOnly ? " | 仅性能日志" : ""}`;
+
+  const categoryCounts = perf.category_counts || {};
+  const categoryText = Object.keys(categoryCounts).length
+    ? Object.entries(categoryCounts)
+        .map(([name, count]) => `${name}:${count}`)
+        .join(" / ")
+    : "无";
+  perfStatus.textContent = `性能日志 ${perf.perf_records || 0} 条 | 分类 ${categoryText}`;
+  perfKpiGrid.innerHTML = [
+    metricKpi("平均耗时", formatMs(perf.elapsed_ms_avg), "基于性能日志", "#3cc6a8"),
+    metricKpi("P95 耗时", formatMs(perf.elapsed_ms_p95), "ms", "#4aa3ff"),
+    metricKpi("最大耗时", formatMs(perf.elapsed_ms_max), "ms", "#ffbf5b"),
+    metricKpi("处理吞吐", `${formatNumber(perf.processed_fps_avg, 2)}`, "fps", "#9ec5bf"),
+    metricKpi("分析吞吐", `${formatNumber(perf.analyzed_fps_avg, 2)}`, "fps", "#ffd489"),
+    metricKpi("单帧均耗时", formatMs(perf.avg_frame_ms_avg), "ms/frame", "#ff8f66"),
+  ].join("");
 
   if (rows.length === 0) {
     tbody.innerHTML = `<tr><td colspan="4">没有匹配日志</td></tr>`;
@@ -77,7 +126,8 @@ async function loadLogs() {
   const levels = selectedLevels();
   const q = document.getElementById("q").value.trim();
   const limit = document.getElementById("limit").value;
-  const params = new URLSearchParams({ levels, q, limit });
+  const perfOnly = document.getElementById("perf-only").checked ? "1" : "0";
+  const params = new URLSearchParams({ levels, q, limit, perf_only: perfOnly });
   const response = await fetch(`/api/logs?${params.toString()}`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`日志加载失败: ${response.status}`);
@@ -93,6 +143,7 @@ function bindEvents() {
   const refreshBtn = document.getElementById("refresh");
   const toggleBtn = document.getElementById("toggle-auto");
   const inputs = Array.from(document.querySelectorAll("input.lv"));
+  const perfOnlyNode = document.getElementById("perf-only");
 
   refreshBtn.addEventListener("click", async () => {
     refreshBtn.disabled = true;
@@ -120,6 +171,9 @@ function bindEvents() {
     }
   });
   document.getElementById("limit").addEventListener("change", async () => {
+    await loadLogs();
+  });
+  perfOnlyNode.addEventListener("change", async () => {
     await loadLogs();
   });
 }

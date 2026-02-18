@@ -231,6 +231,8 @@ const I18N = {
     upload_status_analyzing: "正在分析视频...",
     upload_status_analyze_ok: "视频分析完成。",
     upload_status_analyze_fail: "视频分析失败：{error}",
+    upload_status_analyze_waiting: "分析请求连接中断，正在等待后台完成并同步结果...",
+    upload_status_analyze_timeout: "等待分析结果超时，请稍后刷新仪表盘查看。",
     upload_status_zone_required: "请先完成上传视频圈区初始化，保存后会自动分析。",
     upload_history_none: "暂无可选视频",
     upload_history_current: "当前",
@@ -534,6 +536,8 @@ const I18N = {
     upload_status_analyzing: "Analyzing video...",
     upload_status_analyze_ok: "Video analysis completed.",
     upload_status_analyze_fail: "Video analysis failed: {error}",
+    upload_status_analyze_waiting: "Connection dropped while analyzing. Waiting for backend completion and syncing results...",
+    upload_status_analyze_timeout: "Timed out waiting for analysis result. Refresh dashboard later to check.",
     upload_status_zone_required: "Initialize zones for uploaded video. Analysis starts automatically after save.",
     upload_history_none: "No uploaded videos available",
     upload_history_current: "Current",
@@ -684,6 +688,10 @@ const CLIENT_PREVIEW_EXTRACT = {
   blackMeanThreshold: 3,
   blackStdThreshold: 3,
   blackMaxThreshold: 18,
+};
+const ANALYZE_RESULT_POLL = {
+  intervalMs: 3000,
+  timeoutMs: 8 * 60 * 1000,
 };
 
 const SETTINGS_SECTIONS = [
@@ -3470,7 +3478,7 @@ async function saveInitZones() {
     }
   }
 
-  await loadDashboard(true);
+  await loadDashboard(false);
 }
 
 function shouldForceDashboardRefresh() {
@@ -3526,6 +3534,66 @@ async function responseDetailText(response) {
     // fall through
   }
   return text;
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function shouldPollAfterAnalyzeFailure(statusCode, detail) {
+  if ([408, 429, 500, 502, 503, 504].includes(Number(statusCode))) {
+    return true;
+  }
+  const text = String(detail || "").toLowerCase();
+  return (
+    text.includes("timeout")
+    || text.includes("timed out")
+    || text.includes("upstream")
+    || text.includes("connection reset")
+    || text.includes("failed to fetch")
+  );
+}
+
+async function waitForUploadedAnalyzeResult(statusNode, previousAnalyzedAt) {
+  const status = statusNode || document.getElementById("settings-upload-status");
+  const startedAt = Date.now();
+  let lastError = "";
+
+  while (Date.now() - startedAt < ANALYZE_RESULT_POLL.timeoutMs) {
+    try {
+      await loadDemoStatus();
+    } catch (err) {
+      lastError = String(err);
+    }
+
+    try {
+      await loadDashboard(false);
+    } catch (err) {
+      lastError = String(err);
+    }
+
+    const hasNewAnalyzeTimestamp = Boolean(uploadedAnalyzedAt) && uploadedAnalyzedAt !== previousAnalyzedAt;
+    const dashboardAnalyzed = String(lastDashboardData?.meta?.status_message || "") === "video analyzed";
+    if (hasNewAnalyzeTimestamp || dashboardAnalyzed) {
+      if (status) {
+        status.textContent = t("upload_status_analyze_ok");
+      }
+      return true;
+    }
+
+    if (status) {
+      status.textContent = t("upload_status_analyze_waiting");
+    }
+    await sleepMs(ANALYZE_RESULT_POLL.intervalMs);
+  }
+
+  const reason = lastError || t("upload_status_analyze_timeout");
+  if (status) {
+    status.textContent = formatText("upload_status_analyze_fail", { error: reason });
+  }
+  return false;
 }
 
 function formatMb(bytes) {
@@ -4233,8 +4301,16 @@ async function analyzeUploadedVideoWithStatus(statusNode, openInitOnZoneRequired
     return false;
   }
   status.textContent = t("upload_status_analyzing");
+  const previousAnalyzedAt = uploadedAnalyzedAt;
 
-  const response = await fetch("/api/demo/analyze-upload", { method: "POST" });
+  let response;
+  try {
+    response = await fetch("/api/demo/analyze-upload", { method: "POST" });
+  } catch (_err) {
+    status.textContent = t("upload_status_analyze_waiting");
+    return waitForUploadedAnalyzeResult(status, previousAnalyzedAt);
+  }
+
   if (!response.ok) {
     const text = await responseDetailText(response);
     if (String(text).includes("zone initialization required")) {
@@ -4248,6 +4324,10 @@ async function analyzeUploadedVideoWithStatus(statusNode, openInitOnZoneRequired
         }
       }
       return false;
+    }
+    if (shouldPollAfterAnalyzeFailure(response.status, text)) {
+      status.textContent = t("upload_status_analyze_waiting");
+      return waitForUploadedAnalyzeResult(status, previousAnalyzedAt);
     }
     status.textContent = formatText("upload_status_analyze_fail", { error: text });
     return false;
