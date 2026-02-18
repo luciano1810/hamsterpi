@@ -585,10 +585,53 @@ class VirtualDatasetGenerator:
             "capture_segments": len(motion_segments),
         }
 
+        awake_seconds_by_hour = defaultdict(float)
+        observed_seconds_by_hour = defaultdict(float)
+        awake_switches = 0
+        prev_awake: Optional[bool] = None
+        for idx in range(len(time_series) - 1):
+            current = time_series[idx]
+            nxt = time_series[idx + 1]
+            try:
+                ts_curr = datetime.fromisoformat(str(current.get("timestamp", "")))
+                ts_next = datetime.fromisoformat(str(nxt.get("timestamp", "")))
+            except ValueError:
+                continue
+
+            dt_seconds = max(0.0, (ts_next - ts_curr).total_seconds())
+            if dt_seconds <= 0:
+                continue
+
+            awake = str(current.get("zone", "")) != "hideout_zone"
+            hour = ts_curr.hour
+            observed_seconds_by_hour[hour] += dt_seconds
+            if awake:
+                awake_seconds_by_hour[hour] += dt_seconds
+            if prev_awake is not None and awake != prev_awake:
+                awake_switches += 1
+            prev_awake = awake
+
+        observed_seconds_total = float(sum(observed_seconds_by_hour.values()))
+        awake_seconds_total = float(sum(awake_seconds_by_hour.values()))
+        awake_ratio = awake_seconds_total / observed_seconds_total if observed_seconds_total > 1e-6 else 0.0
+        night_awake_seconds = float(
+            sum(awake_seconds_by_hour[h] for h in [19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6])
+        )
+        night_activity_ratio = night_awake_seconds / awake_seconds_total if awake_seconds_total > 1e-6 else 0.0
+        sleep_fragmentation_index = _clamp(awake_switches / 8.0, 0.0, 1.0)
+        night_alignment = _clamp(1.0 - abs(night_activity_ratio - 0.75) / 0.75, 0.0, 1.0)
+        routine_score = _clamp(night_alignment * 0.4 + 0.6 * 0.35 + (1.0 - sleep_fragmentation_index) * 0.25, 0.0, 1.0)
+
         schedule = {
             "day": now.date().isoformat(),
             "first_out": first_out.isoformat() if first_out else "",
             "last_in": last_in.isoformat() if last_in else "",
+            "awake_ratio": round(awake_ratio, 4),
+            "night_activity_ratio": round(night_activity_ratio, 4),
+            "sleep_fragmentation_index": round(sleep_fragmentation_index, 4),
+            "routine_score": round(routine_score, 4),
+            "vlm_enabled": bool(self.config.health.vlm.enabled),
+            "vlm_samples": 0,
         }
 
         return {

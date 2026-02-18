@@ -92,6 +92,8 @@ class HamsterVisionPipeline:
         )
         self.behavior = BehavioralLogger(
             hideout_polygon=spatial_zones.get("hideout_zone", spatial_fence),
+            vlm_config=vlm_cfg,
+            vlm_sample_interval_seconds=max(20, min(90, config.health.capture_interval_seconds // 8)),
         )
         self.environment = EnvironmentAnalyzer(
             low_light_threshold=config.environment.low_light_threshold,
@@ -894,6 +896,8 @@ class HamsterVisionPipeline:
             dt_seconds=dt,
             centroid=centroid_scaled,
             action_probs=action_probs,
+            image=analysis_frame,
+            zone=str(spatial_metrics.get("in_zone", "")),
         ).to_dict()
 
         scaled_transfer_points = None

@@ -251,6 +251,11 @@ const I18N = {
     schedule_day: "日期",
     schedule_first_out: "首次出窝",
     schedule_last_in: "最后回窝",
+    schedule_awake_ratio: "清醒占比",
+    schedule_night_ratio: "夜间活跃占比",
+    schedule_fragmentation: "睡眠碎片化",
+    schedule_routine_score: "作息规律评分",
+    schedule_vlm_samples: "VLM 采样次数",
     kpi_distance: "24h 总里程",
     kpi_patrol: "巡逻长度",
     kpi_avg_speed: "平均速度",
@@ -562,6 +567,11 @@ const I18N = {
     schedule_day: "Day",
     schedule_first_out: "First Out",
     schedule_last_in: "Last In",
+    schedule_awake_ratio: "Awake Ratio",
+    schedule_night_ratio: "Night Activity Ratio",
+    schedule_fragmentation: "Sleep Fragmentation",
+    schedule_routine_score: "Routine Score",
+    schedule_vlm_samples: "VLM Samples",
     kpi_distance: "Distance (24h)",
     kpi_patrol: "Patrol Length",
     kpi_avg_speed: "Avg Speed",
@@ -2587,6 +2597,11 @@ function renderBehavior(data) {
     <div class="schedule-chip">${t("schedule_day")}: <strong>${schedule.day || "-"}</strong></div>
     <div class="schedule-chip">${t("schedule_first_out")}: <strong>${schedule.first_out ? new Date(schedule.first_out).toLocaleString() : "-"}</strong></div>
     <div class="schedule-chip">${t("schedule_last_in")}: <strong>${schedule.last_in ? new Date(schedule.last_in).toLocaleString() : "-"}</strong></div>
+    <div class="schedule-chip">${t("schedule_awake_ratio")}: <strong>${pct(schedule.awake_ratio || 0)}</strong></div>
+    <div class="schedule-chip">${t("schedule_night_ratio")}: <strong>${pct(schedule.night_activity_ratio || 0)}</strong></div>
+    <div class="schedule-chip">${t("schedule_fragmentation")}: <strong>${pct(schedule.sleep_fragmentation_index || 0)}</strong></div>
+    <div class="schedule-chip">${t("schedule_routine_score")}: <strong>${pct(schedule.routine_score || 0)}</strong></div>
+    <div class="schedule-chip">${t("schedule_vlm_samples")}: <strong>${Number(schedule.vlm_samples || 0)}</strong></div>
   `;
 }
 
