@@ -63,13 +63,19 @@ const I18N = {
     tab_overview: "总览",
     tab_stats: "数据统计",
     tab_live: "实时监控",
-    tab_live_title: "上传视频实时回看",
-    tab_live_desc: "在 demo + 上传视频模式下，实时监控页会直接播放当前选中的上传视频。",
-    live_status_waiting_mode: "当前仅在 demo + 上传视频模式可播放。",
+    tab_live_title: "实时监控（真实模式 / 演示回看）",
+    tab_live_desc: "真实模式显示 CSI 摄像头流；演示模式可回放上传视频。",
+    live_status_waiting_mode: "请切换到真实模式，或使用 demo + 上传视频回看。",
     live_status_waiting_upload: "请先上传并选择视频。",
     live_status_loading: "正在加载上传视频...",
     live_status_ready: "正在播放：{name}",
     live_status_load_fail: "视频加载失败：{error}",
+    live_status_real_loading: "正在连接真实摄像头流...",
+    live_status_real_ready: "真实摄像头在线（{backend}）{recording}",
+    live_status_real_waiting: "真实摄像头连接中：{status}",
+    live_status_real_fail: "真实摄像头流加载失败：{error}",
+    live_recording_on: " · 循环录制中",
+    live_recording_off: " · 未录制",
     section1_title: "1. 虚拟跑轮传感器",
     section1_desc: "速度、圈数、方向与跑停切换强度",
     section2_title: "2. 空间活跃度与领地分析",
@@ -196,7 +202,7 @@ const I18N = {
     settings_upload_label: "上传视频文件",
     settings_editor_label: "配置编辑器（JSON）",
     mode_demo: "演示模式",
-    mode_real: "真实模式（预留）",
+    mode_real: "真实模式（CSI 摄像头）",
     source_virtual: "虚拟数据",
     source_uploaded_video: "上传视频",
     settings_invalid_number: "请输入有效数字",
@@ -241,7 +247,9 @@ const I18N = {
     upload_status_zone_required: "请先完成上传视频圈区初始化，保存后会自动分析。",
     upload_history_none: "暂无可选视频",
     upload_history_current: "当前",
-    mode_real_reserved: "真实模式已预留，当前暂未接入真实摄像头。",
+    mode_real_demo_tools_unavailable: "当前为真实模式，演示上传工具不可用。",
+    mode_real_active: "真实摄像头在线",
+    mode_real_connecting: "真实摄像头连接中",
     status_upload_then_analyze: "请选择上传视频并完成圈区初始化。",
     status_no_frames: "视频中未检测到可分析帧。",
     status_video_analyzed: "视频分析完成。",
@@ -379,13 +387,19 @@ const I18N = {
     tab_overview: "Overview",
     tab_stats: "Data Stats",
     tab_live: "Realtime Monitor",
-    tab_live_title: "Uploaded Video Playback",
-    tab_live_desc: "In demo + uploaded_video mode, this tab plays the currently selected uploaded video.",
-    live_status_waiting_mode: "Playback is available only in demo + uploaded_video mode.",
+    tab_live_title: "Realtime Monitor (Real / Demo Playback)",
+    tab_live_desc: "Real mode shows CSI camera stream; demo mode plays uploaded video.",
+    live_status_waiting_mode: "Switch to real mode, or use demo + uploaded_video playback.",
     live_status_waiting_upload: "Upload and select a video first.",
     live_status_loading: "Loading uploaded video...",
     live_status_ready: "Playing: {name}",
     live_status_load_fail: "Failed to load video: {error}",
+    live_status_real_loading: "Connecting to real camera stream...",
+    live_status_real_ready: "Real camera online ({backend}){recording}",
+    live_status_real_waiting: "Real camera connecting: {status}",
+    live_status_real_fail: "Failed to load real camera stream: {error}",
+    live_recording_on: " · loop recording",
+    live_recording_off: " · recording off",
     section1_title: "1. Virtual Odometer",
     section1_desc: "Speed, revolutions, direction and stop-go intensity",
     section2_title: "2. Spatial Analytics",
@@ -512,7 +526,7 @@ const I18N = {
     settings_upload_label: "Upload Video",
     settings_editor_label: "Configuration Editor (JSON)",
     mode_demo: "Demo",
-    mode_real: "Real (Reserved)",
+    mode_real: "Real (CSI Camera)",
     source_virtual: "Virtual Data",
     source_uploaded_video: "Uploaded Video Analysis",
     settings_invalid_number: "Please enter a valid number",
@@ -557,7 +571,9 @@ const I18N = {
     upload_status_zone_required: "Initialize zones for uploaded video. Analysis starts automatically after save.",
     upload_history_none: "No uploaded videos available",
     upload_history_current: "Current",
-    mode_real_reserved: "Real mode is reserved and camera control is not connected yet.",
+    mode_real_demo_tools_unavailable: "Demo upload tools are unavailable in real mode.",
+    mode_real_active: "Real camera online",
+    mode_real_connecting: "Real camera connecting",
     status_upload_then_analyze: "Upload a video and complete zone initialization.",
     status_no_frames: "No analyzable frames found in video.",
     status_video_analyzed: "Video analysis completed.",
@@ -692,6 +708,10 @@ let featuredFeedbackMessage = "";
 let activeDashboardTab = "overview";
 let currentTheme = "dark";
 let liveVideoLoadedKey = "";
+let liveRealStreamBound = false;
+let liveRealStreamLoaded = false;
+let liveRealStreamFailed = false;
+let realCameraMeta = null;
 const CLIENT_VIDEO_COMPRESS = {
   maxWidth: 960,
   maxHeight: 540,
@@ -758,6 +778,15 @@ const SETTINGS_FIELD_LABELS = {
   "video.frame_height": { "zh-CN": "画面高度 (px)", "en-US": "Frame Height (px)" },
   "video.simulate": { "zh-CN": "启用模拟输入", "en-US": "Use Simulated Input" },
   "video.snapshot_interval_seconds": { "zh-CN": "快照间隔 (秒)", "en-US": "Snapshot Interval (s)" },
+  "video.real_camera_device": { "zh-CN": "真实摄像头设备", "en-US": "Real Camera Device" },
+  "video.real_camera_rotation": { "zh-CN": "真实摄像头旋转", "en-US": "Real Camera Rotation" },
+  "video.real_stream_fps": { "zh-CN": "实时流帧率 (FPS)", "en-US": "Realtime Stream FPS" },
+  "video.real_record_enabled": { "zh-CN": "启用循环录制", "en-US": "Enable Loop Recording" },
+  "video.real_record_fps": { "zh-CN": "循环录制帧率 (FPS)", "en-US": "Loop Recording FPS" },
+  "video.real_record_segment_seconds": { "zh-CN": "录制分段时长 (秒)", "en-US": "Recording Segment Duration (s)" },
+  "video.real_record_output_dir": { "zh-CN": "循环录制输出目录", "en-US": "Loop Recording Output Directory" },
+  "video.real_record_codec": { "zh-CN": "循环录制编码", "en-US": "Loop Recording Codec" },
+  "video.real_record_max_storage_gb": { "zh-CN": "循环录制最大占用 (GB)", "en-US": "Loop Recording Max Storage (GB)" },
   "runtime.profile": { "zh-CN": "运行配置档", "en-US": "Runtime Profile" },
   "runtime.low_memory_mode": { "zh-CN": "低内存模式", "en-US": "Low Memory Mode" },
   "runtime.process_every_nth_frame": { "zh-CN": "每 N 帧处理 1 帧", "en-US": "Process Every Nth Frame" },
@@ -840,6 +869,24 @@ const SETTINGS_FIELD_OPTIONS = {
   "video.frame_width": [320, 480, 640, 960, 1280, 1920],
   "video.frame_height": [180, 270, 360, 540, 720, 1080],
   "video.snapshot_interval_seconds": [60, 120, 300, 600, 900, 1800],
+  "video.real_camera_device": [
+    { value: "auto", label: { "zh-CN": "自动 (优先 Picamera2)", "en-US": "Auto (prefer Picamera2)" } },
+    { value: "picamera2", label: { "zh-CN": "Picamera2", "en-US": "Picamera2" } },
+    { value: "0", label: { "zh-CN": "OpenCV 设备 0", "en-US": "OpenCV device 0" } },
+    { value: "/dev/video0", label: { "zh-CN": "/dev/video0", "en-US": "/dev/video0" } },
+    { value: "/dev/video1", label: { "zh-CN": "/dev/video1", "en-US": "/dev/video1" } },
+  ],
+  "video.real_camera_rotation": [0, 90, 180, 270],
+  "video.real_stream_fps": [5, 8, 10, 12, 15, 20, 24, 30],
+  "video.real_record_fps": [5, 8, 10, 12, 15, 20, 24, 30],
+  "video.real_record_segment_seconds": [60, 120, 180, 300, 600, 900, 1800],
+  "video.real_record_codec": [
+    { value: "mp4v", label: { "zh-CN": "MP4V（通用）", "en-US": "MP4V (Generic)" } },
+    { value: "avc1", label: { "zh-CN": "AVC1（H.264）", "en-US": "AVC1 (H.264)" } },
+    { value: "XVID", label: { "zh-CN": "XVID", "en-US": "XVID" } },
+    { value: "MJPG", label: { "zh-CN": "MJPG", "en-US": "MJPG" } },
+  ],
+  "video.real_record_max_storage_gb": [0.5, 1, 2, 4, 8, 16, 32, 64],
   "runtime.profile": [
     { value: "rpi_zero2w", label: { "zh-CN": "Pi Zero 2W 低内存", "en-US": "Pi Zero 2W (Low Memory)" } },
     { value: "default", label: { "zh-CN": "默认", "en-US": "Default" } },
@@ -1610,16 +1657,82 @@ function clearLiveVideoSource(video) {
   video.load();
 }
 
+function clearLiveRealSource(image) {
+  image.removeAttribute("src");
+}
+
+function setLivePlayerMode(video, image, useVideo) {
+  video.classList.toggle("hidden", !useVideo);
+  image.classList.toggle("hidden", useVideo);
+}
+
 function liveVideoDisplayName() {
   return uploadedVideoName || uploadedVideoKey || "";
 }
 
+function realRecordingSuffix(meta) {
+  if (!meta || !meta.recording_enabled) {
+    return t("live_recording_off");
+  }
+  return meta.recording_active ? t("live_recording_on") : t("live_recording_off");
+}
+
 function renderLiveVideoPanel() {
   const video = document.getElementById("live-upload-video");
+  const image = document.getElementById("live-real-image");
   const status = document.getElementById("live-upload-status");
-  if (!video || !status) {
+  if (!video || !image || !status) {
     return;
   }
+
+  const inRealMode = currentRunMode === "real";
+  if (inRealMode) {
+    setLivePlayerMode(video, image, false);
+
+    if (liveVideoLoadedKey) {
+      clearLiveVideoSource(video);
+    }
+    liveVideoLoadedKey = "";
+
+    if (!liveRealStreamBound) {
+      liveRealStreamBound = true;
+      liveRealStreamLoaded = false;
+      liveRealStreamFailed = false;
+      image.src = `/api/real/live-stream?ts=${Date.now()}`;
+    }
+
+    if (liveRealStreamFailed) {
+      status.textContent = formatText("live_status_real_fail", { error: "stream" });
+      return;
+    }
+
+    if (realCameraMeta && !realCameraMeta.camera_opened) {
+      const waitText = String(realCameraMeta.status || t("mode_real_connecting"));
+      status.textContent = formatText("live_status_real_waiting", { status: waitText });
+      return;
+    }
+
+    if (liveRealStreamLoaded || realCameraMeta?.camera_opened) {
+      const backendRaw = String(realCameraMeta?.backend || "camera");
+      const backend = backendRaw.trim() || "camera";
+      status.textContent = formatText("live_status_real_ready", {
+        backend,
+        recording: realRecordingSuffix(realCameraMeta),
+      });
+      return;
+    }
+
+    status.textContent = t("live_status_real_loading");
+    return;
+  }
+
+  if (liveRealStreamBound) {
+    clearLiveRealSource(image);
+    liveRealStreamBound = false;
+    liveRealStreamLoaded = false;
+    liveRealStreamFailed = false;
+  }
+  setLivePlayerMode(video, image, true);
 
   const modeReady = currentRunMode === "demo" && currentDemoSource === "uploaded_video";
   if (!modeReady) {
@@ -1894,7 +2007,8 @@ function alertMessageLabel(item) {
 
 function statusMessageLabel(message) {
   const mapping = {
-    "real mode reserved": "mode_real_reserved",
+    "real camera online": "mode_real_active",
+    "real camera connecting": "mode_real_connecting",
     "upload a video then analyze": "status_upload_then_analyze",
     "upload a video and initialize zones": "status_upload_then_analyze",
     "no uploaded video": "status_upload_then_analyze",
@@ -2871,6 +2985,9 @@ function renderGeneratedAt(data) {
   if (typeof data.meta?.uploaded_zone_required === "boolean") {
     uploadedZoneRequired = data.meta.uploaded_zone_required;
   }
+  realCameraMeta = data.meta?.real_camera && typeof data.meta.real_camera === "object"
+    ? data.meta.real_camera
+    : null;
   const nextUploadedAnalyzedAt = String(data.meta?.uploaded_analyzed_at || "");
   if (nextUploadedAnalyzedAt !== uploadedAnalyzedAt) {
     uploadedAnalyzedAt = nextUploadedAnalyzedAt;
@@ -3610,6 +3727,7 @@ function syncModeFromRaw(raw) {
   updateModeSelectorsLabel();
   updateUploadBlockVisibility();
   updateInitMappingVisibility();
+  renderLiveVideoPanel();
 }
 
 async function loadDemoStatus() {
@@ -4242,7 +4360,7 @@ async function uploadDemoVideo() {
   const uploadBtn = document.getElementById("settings-upload");
 
   if (currentRunMode !== "demo") {
-    status.textContent = t("mode_real_reserved");
+    status.textContent = t("mode_real_demo_tools_unavailable");
     return;
   }
   if (currentDemoSource !== "uploaded_video") {
@@ -4299,7 +4417,7 @@ async function selectUploadedVideo() {
   const useUploadedBtn = document.getElementById("settings-use-uploaded");
 
   if (currentRunMode !== "demo") {
-    status.textContent = t("mode_real_reserved");
+    status.textContent = t("mode_real_demo_tools_unavailable");
     return;
   }
   if (currentDemoSource !== "uploaded_video") {
@@ -4356,7 +4474,7 @@ async function analyzeUploadedVideoWithStatus(statusNode, openInitOnZoneRequired
     return false;
   }
   if (currentRunMode !== "demo") {
-    status.textContent = t("mode_real_reserved");
+    status.textContent = t("mode_real_demo_tools_unavailable");
     return false;
   }
   if (currentDemoSource !== "uploaded_video") {
@@ -4523,6 +4641,20 @@ function bindEvents() {
     });
   }
 
+  const liveRealImage = document.getElementById("live-real-image");
+  if (liveRealImage) {
+    liveRealImage.addEventListener("load", () => {
+      liveRealStreamLoaded = true;
+      liveRealStreamFailed = false;
+      renderLiveVideoPanel();
+    });
+    liveRealImage.addEventListener("error", () => {
+      liveRealStreamFailed = true;
+      liveRealStreamLoaded = false;
+      renderLiveVideoPanel();
+    });
+  }
+
   refreshBtn.addEventListener("click", async () => {
     refreshBtn.disabled = true;
     refreshBtn.textContent = t("btn_refreshing");
@@ -4592,8 +4724,9 @@ function bindEvents() {
       currentRunMode = event.target.value;
       updateUploadBlockVisibility();
       updateInitMappingVisibility();
+      renderLiveVideoPanel();
       if (currentRunMode === "real") {
-        document.getElementById("settings-status").textContent = t("mode_real_reserved");
+        document.getElementById("settings-status").textContent = t("mode_real_connecting");
       }
     });
   }
@@ -4602,6 +4735,7 @@ function bindEvents() {
     demoSourceSelect.addEventListener("change", (event) => {
       currentDemoSource = event.target.value;
       updateUploadBlockVisibility();
+      renderLiveVideoPanel();
     });
   }
 
@@ -4638,12 +4772,14 @@ function startAutoRefresh() {
     if (!autoRefresh) {
       return;
     }
-    if (currentRunMode !== "demo" || currentDemoSource !== "virtual") {
+    const refreshVirtualDemo = currentRunMode === "demo" && currentDemoSource === "virtual";
+    const refreshRealMode = currentRunMode === "real";
+    if (!refreshVirtualDemo && !refreshRealMode) {
       return;
     }
 
     try {
-      await loadDashboard(true);
+      await loadDashboard(refreshVirtualDemo);
     } catch (err) {
       console.error(err);
     }

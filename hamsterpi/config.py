@@ -62,6 +62,23 @@ class VideoConfig(BaseModel):
     frame_height: int = Field(default=720, ge=1)
     simulate: bool = True
     snapshot_interval_seconds: int = Field(default=300, ge=1)
+    real_camera_device: str = "auto"
+    real_camera_rotation: int = Field(default=0)
+    real_stream_fps: int = Field(default=10, ge=1, le=30)
+    real_record_enabled: bool = True
+    real_record_fps: int = Field(default=10, ge=1, le=30)
+    real_record_segment_seconds: int = Field(default=300, ge=30, le=3600)
+    real_record_output_dir: str = "./captures/real_loop"
+    real_record_codec: str = "mp4v"
+    real_record_max_storage_gb: float = Field(default=2.0, ge=0.1, le=256.0)
+
+    @field_validator("real_camera_rotation")
+    @classmethod
+    def validate_real_camera_rotation(cls, value: int) -> int:
+        angle = int(value) % 360
+        if angle not in {0, 90, 180, 270}:
+            raise ValueError("real_camera_rotation must be one of 0/90/180/270")
+        return angle
 
 
 class RuntimeConfig(BaseModel):

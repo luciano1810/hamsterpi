@@ -8,8 +8,8 @@ HamsterPi is a Raspberry Pi Zero 2W friendly hamster monitoring and analytics st
 
 - `demo + virtual`: available (synthetic dashboard)
 - `demo + uploaded_video`: available (upload video, initialize zones, auto analyze)
-- `real` mode: reserved (real camera control is not connected yet)
-- `Realtime` tab/page: reserved
+- `real` mode: available (CSI camera realtime monitor + loop recording)
+- `Realtime` tab/page: available (demo playback / real camera stream)
 
 ## Core Capabilities
 
@@ -24,6 +24,7 @@ HamsterPi is a Raspberry Pi Zero 2W friendly hamster monitoring and analytics st
 9. **Inventory watch**: water level, food residue, gnaw wear
 10. **Behavior and environment analytics**: schedule, grooming/digging, anxiety, lighting/cleanliness/bedding
 11. **Motion-triggered capture**: record only when scene changes to reduce CPU/storage
+12. **Real-mode loop recording**: CSI stream + segmented loop recording + max-storage auto pruning, with per-frame timestamp logs
 
 ## Raspberry Pi Zero 2W Focus
 
@@ -88,7 +89,7 @@ Open:
 
 - `app.run_mode`
   - `demo` (default)
-  - `real` (reserved)
+  - `real` (real camera)
 - `app.demo_source` (effective when `run_mode=demo`)
   - `virtual` (synthetic data)
   - `uploaded_video` (uploaded video analysis)
@@ -98,6 +99,17 @@ Open:
 1. Upload a video (browser first tries uploading original first frame for init background; fallback is backend frame extraction)
 2. Open `Initialize Zones` and finish all zone polygons
 3. Click `Save Zones` and analysis is triggered automatically in demo uploaded-video mode
+
+`real` mode notes:
+
+1. Choose `video.real_camera_device` as `auto / picamera2 / 0 / /dev/video0`
+2. Realtime tab switches to `/api/real/live-stream`
+3. Recording output directory: `video.real_record_output_dir`
+4. Max recording storage: `video.real_record_max_storage_gb` (oldest segments are auto-pruned)
+5. Each segment outputs:
+   - `loop_*.mp4`
+   - `loop_*.mp4.frames.jsonl` (frame timestamps + video timeline mapping)
+   - `loop_*.mp4.meta.json` (frame-time matching stats)
 
 ## Zone Initialization and Mapping Preview
 
@@ -141,6 +153,8 @@ Mapping preview behavior:
 - `POST /api/demo/select-uploaded`
 - `POST /api/demo/analyze-upload`
 - `POST /api/demo/featured-photo/feedback`
+- `GET /api/real/status`
+- `GET /api/real/live-stream`
 - `GET /api/dashboard`
 - `GET /api/dashboard?refresh=true`
 - `POST /api/dashboard/refresh`

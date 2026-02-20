@@ -13,6 +13,15 @@ video:
   frame_height: 540
   simulate: true
   snapshot_interval_seconds: 300
+  real_camera_device: auto
+  real_camera_rotation: 0
+  real_stream_fps: 10
+  real_record_enabled: true
+  real_record_fps: 10
+  real_record_segment_seconds: 300
+  real_record_output_dir: ./captures/real_loop
+  real_record_codec: mp4v
+  real_record_max_storage_gb: 2.0
 runtime:
   profile: rpi_zero2w
   low_memory_mode: true

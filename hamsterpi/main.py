@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -27,6 +27,7 @@ from hamsterpi.config import (
 )
 from hamsterpi.logging_system import configure_logging, get_logger, resolve_log_file
 from hamsterpi.pipeline import HamsterVisionPipeline
+from hamsterpi.real_camera import RealCameraLoopService
 from hamsterpi.simulator import VirtualDatasetGenerator
 from hamsterpi.video_capture import apply_video_orientation, open_video_capture
 
@@ -898,6 +899,15 @@ class DashboardState:
         self._featured_feedback_history: List[Dict[str, str]] = []
         self.init_preview_frame: Optional[np.ndarray] = None
         self.init_preview_token: str = ""
+        self.real_camera = RealCameraLoopService(self.config)
+        self._sync_real_camera_mode()
+
+    def _sync_real_camera_mode(self) -> None:
+        self.real_camera.apply_config(self.config)
+        if self.config.app.run_mode == "real":
+            self.real_camera.start()
+        else:
+            self.real_camera.stop()
 
     def _reset_featured_feedback_state(self) -> None:
         self.uploaded_featured_candidates = []
@@ -1203,6 +1213,7 @@ class DashboardState:
         self.generator = VirtualDatasetGenerator(self.config)
         self.payload = self.generator.generate(self.config.frontend.history_minutes)
         self.last_update = datetime.now()
+        self._sync_real_camera_mode()
         LOGGER.info(
             "Config reloaded from disk",
             extra={
@@ -1219,10 +1230,15 @@ class DashboardState:
         demo_source = self.config.app.demo_source
 
         if run_mode == "real":
+            real_snapshot = self.real_camera.snapshot()
+            if not bool(real_snapshot.get("running", False)):
+                self.real_camera.start()
+                real_snapshot = self.real_camera.snapshot()
+            status_message = "real camera online" if real_snapshot.get("camera_opened") else "real camera connecting"
             payload = _empty_dashboard_payload(
                 self.config,
                 source="real-camera",
-                status_message="real mode reserved",
+                status_message=status_message,
             )
             payload["meta"]["run_mode"] = "real"
             payload["meta"]["demo_source"] = demo_source
@@ -1231,6 +1247,7 @@ class DashboardState:
             payload["meta"]["uploaded_preview_available"] = bool(self.uploaded_preview_path and self.uploaded_preview_path.exists())
             payload["meta"]["uploaded_analyzed_at"] = self.uploaded_analyzed_at.isoformat() if self.uploaded_analyzed_at else ""
             payload["meta"]["uploaded_zone_required"] = self.uploaded_zone_required
+            payload["meta"]["real_camera"] = real_snapshot
             self.payload = payload
             return payload
 
@@ -1267,6 +1284,9 @@ class DashboardState:
         payload["meta"]["uploaded_analyzed_at"] = self.uploaded_analyzed_at.isoformat() if self.uploaded_analyzed_at else ""
         payload["meta"]["uploaded_zone_required"] = self.uploaded_zone_required
         return payload
+
+    def shutdown(self) -> None:
+        self.real_camera.stop()
 
 
 try:
@@ -1931,6 +1951,47 @@ def demo_live_video(video_key: str = Query(default="", max_length=255)) -> FileR
         )
 
 
+@app.get("/api/real/status")
+def real_camera_status() -> Dict[str, Any]:
+    with dashboard_state.lock:
+        cfg = dashboard_state.config
+        if cfg.app.run_mode != "real":
+            raise HTTPException(status_code=400, detail="Real camera status is only available in real mode")
+        snapshot = dashboard_state.real_camera.snapshot()
+        if not bool(snapshot.get("running", False)):
+            dashboard_state.real_camera.start()
+            snapshot = dashboard_state.real_camera.snapshot()
+        return snapshot
+
+
+@app.get("/api/real/live-stream")
+def real_camera_live_stream() -> StreamingResponse:
+    with dashboard_state.lock:
+        cfg = dashboard_state.config
+        if cfg.app.run_mode != "real":
+            raise HTTPException(status_code=400, detail="Real live stream is only available in real mode")
+        service = dashboard_state.real_camera
+        service.start()
+
+    def iter_mjpeg():
+        boundary = b"--frame\r\n"
+        frame_seq = 0
+        while True:
+            frame_seq, frame = service.wait_next_frame_jpeg(frame_seq, timeout_seconds=1.5)
+            if not frame:
+                continue
+            yield boundary
+            yield b"Content-Type: image/jpeg\r\n"
+            yield f"Content-Length: {len(frame)}\r\n\r\n".encode("ascii")
+            yield frame
+            yield b"\r\n"
+
+    return StreamingResponse(
+        iter_mjpeg(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
 @app.post("/api/demo/upload-preview")
 async def upload_demo_preview(
     request: Request,
@@ -2328,6 +2389,12 @@ def get_dashboard(refresh: bool = Query(default=False)) -> Dict[str, Any]:
 def force_refresh() -> Dict[str, Any]:
     with dashboard_state.lock:
         return dashboard_state.dashboard_for_mode(refresh=True)
+
+
+@app.on_event("shutdown")
+def on_shutdown() -> None:
+    with dashboard_state.lock:
+        dashboard_state.shutdown()
 
 
 app.mount("/web", StaticFiles(directory=str(WEB_DIR)), name="web")

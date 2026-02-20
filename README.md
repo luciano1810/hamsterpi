@@ -8,8 +8,8 @@ HamsterPi 是一个面向树莓派（Raspberry Pi Zero 2W）优化的仓鼠监�
 
 - `demo + virtual`：可用（模拟数据看板）
 - `demo + uploaded_video`：可用（上传视频、圈区、自动分析）
-- `real` 模式：预留（未接入真实摄像头采集控制）
-- 页面 `实时监控 / Realtime`：预留
+- `real` 模式：可用（CSI 摄像头实时监控 + 循环录制）
+- 页面 `实时监控 / Realtime`：可用（Demo 回看 / Real 摄像头流）
 
 ## 核心能力
 
@@ -24,6 +24,7 @@ HamsterPi 是一个面向树莓派（Raspberry Pi Zero 2W）优化的仓鼠监�
 9. **物资监测**：水位、食物余量、磨牙损耗
 10. **行为与环境分析**：作息、理毛/挖掘、焦虑指数、光照/清洁/垫料舒适度
 11. **运动触发录制**：仅在画面变化时触发录制，降低 CPU 与存储占用
+12. **真实模式循环录制**：支持 CSI 摄像头实时流、分段循环录制、按最大存储空间自动淘汰旧片段，并输出逐帧时间戳日志
 
 ## 树莓派 Zero 2W 优化
 
@@ -88,7 +89,7 @@ uvicorn hamsterpi.log_viewer:app --host 0.0.0.0 --port 8002
 
 - `app.run_mode`
   - `demo`（默认）
-  - `real`（预留）
+  - `real`（真实摄像头）
 - `app.demo_source`（`run_mode=demo` 时生效）
   - `virtual`（模拟数据）
   - `uploaded_video`（上传视频分析）
@@ -98,6 +99,17 @@ uvicorn hamsterpi.log_viewer:app --host 0.0.0.0 --port 8002
 1. 上传视频（浏览器优先上传原始首帧供圈区背景使用；失败时回退服务端抽帧）
 2. 进入 `Initialize Zones` 完成圈区
 3. 点击 `Save Zones` 后自动触发分析（若处于 Demo 上传视频模式）
+
+`real` 模式要点：
+
+1. 在设置 `video.real_camera_device` 选择 `auto / picamera2 / 0 / /dev/video0`
+2. 实时页自动切换为 `/api/real/live-stream` 摄像头流
+3. 循环录制目录 `video.real_record_output_dir`
+4. 最大占用空间 `video.real_record_max_storage_gb`（超限自动删最旧片段）
+5. 每个片段写出
+   - `loop_*.mp4`
+   - `loop_*.mp4.frames.jsonl`（逐帧时间戳与视频时间）
+   - `loop_*.mp4.meta.json`（帧-时间匹配统计）
 
 ## 圈区初始化与映射预览
 
@@ -141,6 +153,8 @@ uvicorn hamsterpi.log_viewer:app --host 0.0.0.0 --port 8002
 - `POST /api/demo/select-uploaded`
 - `POST /api/demo/analyze-upload`
 - `POST /api/demo/featured-photo/feedback`
+- `GET /api/real/status`
+- `GET /api/real/live-stream`
 - `GET /api/dashboard`
 - `GET /api/dashboard?refresh=true`
 - `POST /api/dashboard/refresh`
