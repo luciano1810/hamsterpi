@@ -139,11 +139,6 @@ class VirtualDatasetGenerator:
         environment_hourly = defaultdict(list)
 
         motion_series: List[Dict[str, object]] = []
-        motion_segments: List[Dict[str, str | float]] = []
-        capture_active = False
-        motion_streak = 0
-        idle_streak = 0
-        segment_start: Optional[datetime] = None
 
         volume_trend = 0.0
         grooming_count = 0
@@ -362,45 +357,15 @@ class VirtualDatasetGenerator:
                     }
                 )
 
-            # Motion-trigger simulation.
+            # Motion signal simulation (analysis is gated by motion, recording is continuous in real mode).
             motion_ratio = _clamp(activity * 0.014 + (0.006 if running else 0.0) + self.rng.normal(0.0, 0.0022), 0.0, 0.09)
             is_motion = motion_ratio >= self.config.motion_trigger.min_motion_ratio
-            if is_motion:
-                motion_streak += 1
-                idle_streak = 0
-            else:
-                idle_streak += 1
-                motion_streak = 0
-
-            start_capture = False
-            stop_capture = False
-
-            if (not capture_active) and motion_streak >= self.config.motion_trigger.start_trigger_frames:
-                capture_active = True
-                segment_start = ts
-                start_capture = True
-
-            if capture_active and idle_streak >= self.config.motion_trigger.stop_trigger_frames:
-                capture_active = False
-                stop_capture = True
-                if segment_start is not None:
-                    motion_segments.append(
-                        {
-                            "start": segment_start.isoformat(),
-                            "end": ts.isoformat(),
-                            "duration_s": round((ts - segment_start).total_seconds(), 2),
-                        }
-                    )
-                    segment_start = None
 
             motion_series.append(
                 {
                     "timestamp": ts.isoformat(),
                     "motion_ratio": round(motion_ratio, 5),
                     "is_motion": is_motion,
-                    "capture_active": capture_active,
-                    "start_capture": start_capture,
-                    "stop_capture": stop_capture,
                 }
             )
 
@@ -436,7 +401,7 @@ class VirtualDatasetGenerator:
                     "anxiety_index": round(anxiety_index, 4),
                     "comfort_index": round(comfort, 4),
                     "motion_ratio": round(motion_ratio, 5),
-                    "capture_active": capture_active,
+                    "is_motion": is_motion,
                 }
             )
 
@@ -488,15 +453,6 @@ class VirtualDatasetGenerator:
                         "notes": "synthetic-vlm",
                     }
                 )
-
-        if capture_active and segment_start is not None:
-            motion_segments.append(
-                {
-                    "start": segment_start.isoformat(),
-                    "end": now.isoformat(),
-                    "duration_s": round((now - segment_start).total_seconds(), 2),
-                }
-            )
 
         # Aggregate metrics
         reverse_ratio = direction_counts["reverse"] / max(direction_counts["forward"] + direction_counts["reverse"], 1)
@@ -582,7 +538,6 @@ class VirtualDatasetGenerator:
             "health_risk_level": latest_health["risk_level"] if latest_health else "unknown",
             "environment_comfort_index": latest_env["comfort_index"] if latest_env else 0.0,
             "environment_risk_level": latest_env["risk_level"] if latest_env else "unknown",
-            "capture_segments": len(motion_segments),
         }
 
         awake_seconds_by_hour = defaultdict(float)
@@ -681,10 +636,13 @@ class VirtualDatasetGenerator:
             },
             "overview": {
                 "featured_photo": None,
+                "current_position": {
+                    "timestamp": str(latest.get("timestamp", "")),
+                    "x": latest.get("x"),
+                    "y": latest.get("y"),
+                    "zone": str(latest.get("zone", "unknown") or "unknown"),
+                },
             },
-            "motion": {
-                "series": motion_series,
-                "segments": motion_segments,
-            },
+            "motion": {"series": motion_series},
             "alerts": alerts[-300:],
         }

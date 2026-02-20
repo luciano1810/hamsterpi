@@ -99,14 +99,6 @@ class MotionTriggerConfig(BaseModel):
     blur_kernel: int = Field(default=5, ge=3)
     diff_threshold: int = Field(default=24, ge=1, le=255)
     min_motion_ratio: float = Field(default=0.006, ge=0.0, le=1.0)
-    start_trigger_frames: int = Field(default=2, ge=1)
-    stop_trigger_frames: int = Field(default=15, ge=1)
-    min_capture_seconds: float = Field(default=1.5, ge=0.0)
-    cool_down_seconds: float = Field(default=1.0, ge=0.0)
-    output_dir: str = "./captures"
-    record_video: bool = True
-    output_fps: int = Field(default=8, ge=1, le=30)
-    codec: str = "mp4v"
 
     @field_validator("blur_kernel")
     @classmethod

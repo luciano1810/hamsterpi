@@ -218,8 +218,26 @@ class RealCameraLoopService:
         self._segment_error_abs_sum_ms = 0.0
         self._segment_error_abs_max_ms = 0.0
 
+        self._analysis_downscale_width = 320
+        self._analysis_blur_kernel = 5
+        self._analysis_diff_threshold = 24
+        self._analysis_min_motion_ratio = 0.006
+
+        self._spatial_source_width = 1
+        self._spatial_source_height = 1
+        self._fence_polygon_src: list[tuple[int, int]] = []
+        self._zones_polygon_src: dict[str, list[tuple[int, int]]] = {}
+        self._scaled_spatial_key: tuple[int, int] = (0, 0)
+        self._scaled_fence_polygon: Optional[np.ndarray] = None
+        self._scaled_zone_polygons: dict[str, np.ndarray] = {}
+
+        self._position_prev_gray: Optional[np.ndarray] = None
+        self._current_position: Optional[dict[str, Any]] = None
+        self._apply_analysis_config(config)
+
     def apply_config(self, config: SystemConfig) -> None:
         next_settings = RealCameraSettings.from_config(config)
+        self._apply_analysis_config(config)
         should_restart = False
         with self._state_lock:
             if next_settings != self._settings:
@@ -252,6 +270,8 @@ class RealCameraLoopService:
             self._camera_opened = False
             self._backend_name = ""
             self._status_text = "stopped"
+            self._position_prev_gray = None
+            self._current_position = None
 
     def wait_latest_frame_jpeg(self, timeout_seconds: float = 1.0) -> Optional[bytes]:
         with self._frame_cv:
@@ -296,6 +316,7 @@ class RealCameraLoopService:
                 "record_output_dir": str(settings.record_output_dir),
                 "record_segment_seconds": int(settings.record_segment_seconds),
                 "record_fps": int(settings.record_fps),
+                "current_position": dict(self._current_position) if isinstance(self._current_position, dict) else None,
             }
 
         file_count, total_bytes = self._scan_record_storage(settings.record_output_dir)
@@ -373,6 +394,7 @@ class RealCameraLoopService:
             now_mono = time.monotonic()
             self._publish_frame(frame, now, now_mono)
             self._record_frame(frame, now, now_mono)
+            self._update_position_on_motion(frame, now)
 
         if backend is not None:
             try:
@@ -420,6 +442,159 @@ class RealCameraLoopService:
             self._latest_frame_seq += 1
             self._frame_cv.notify_all()
         self._next_stream_encode_monotonic = now_mono + interval
+
+    def _apply_analysis_config(self, config: SystemConfig) -> None:
+        blur_kernel = int(config.motion_trigger.blur_kernel)
+        if blur_kernel % 2 == 0:
+            blur_kernel += 1
+        fence = [
+            (int(point[0]), int(point[1]))
+            for point in config.spatial.fence_polygon
+            if len(point) == 2
+        ]
+        zones = {
+            str(name): [
+                (int(point[0]), int(point[1]))
+                for point in points
+                if len(point) == 2
+            ]
+            for name, points in config.spatial.zones.items()
+        }
+        with self._state_lock:
+            self._analysis_downscale_width = max(64, int(config.motion_trigger.downscale_width))
+            self._analysis_blur_kernel = max(3, blur_kernel)
+            self._analysis_diff_threshold = max(1, min(255, int(config.motion_trigger.diff_threshold)))
+            self._analysis_min_motion_ratio = float(max(0.0, min(1.0, config.motion_trigger.min_motion_ratio)))
+            self._spatial_source_width = max(1, int(config.spatial.frame_width))
+            self._spatial_source_height = max(1, int(config.spatial.frame_height))
+            self._fence_polygon_src = fence
+            self._zones_polygon_src = zones
+            self._scaled_spatial_key = (0, 0)
+            self._scaled_fence_polygon = None
+            self._scaled_zone_polygons = {}
+            self._position_prev_gray = None
+            self._current_position = None
+
+    @staticmethod
+    def _preprocess_motion_frame(frame: np.ndarray, downscale_width: int, blur_kernel: int) -> np.ndarray:
+        h, w = frame.shape[:2]
+        target_w = min(max(64, int(downscale_width)), max(1, w))
+        target_h = max(1, int(round(h * target_w / max(w, 1))))
+        resized = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+        cv2.GaussianBlur(gray, (blur_kernel, blur_kernel), 0, dst=gray)
+        return gray
+
+    @staticmethod
+    def _scale_polygon(
+        points: list[tuple[int, int]],
+        scale_x: float,
+        scale_y: float,
+        max_w: int,
+        max_h: int,
+    ) -> Optional[np.ndarray]:
+        if len(points) < 3:
+            return None
+        out: list[tuple[float, float]] = []
+        for px, py in points:
+            x = float(np.clip(px * scale_x, 0, max_w - 1))
+            y = float(np.clip(py * scale_y, 0, max_h - 1))
+            out.append((x, y))
+        if len(out) < 3:
+            return None
+        return np.array(out, dtype=np.float32).reshape(-1, 1, 2)
+
+    def _ensure_scaled_spatial_polygons(self, frame_w: int, frame_h: int) -> None:
+        key = (int(frame_w), int(frame_h))
+        with self._state_lock:
+            if key == self._scaled_spatial_key and (self._scaled_zone_polygons or self._scaled_fence_polygon is not None):
+                return
+            src_w = float(max(self._spatial_source_width, 1))
+            src_h = float(max(self._spatial_source_height, 1))
+            sx = float(frame_w / src_w)
+            sy = float(frame_h / src_h)
+            self._scaled_fence_polygon = self._scale_polygon(self._fence_polygon_src, sx, sy, frame_w, frame_h)
+
+            scaled_zones: dict[str, np.ndarray] = {}
+            for name, polygon in self._zones_polygon_src.items():
+                scaled = self._scale_polygon(polygon, sx, sy, frame_w, frame_h)
+                if scaled is not None:
+                    scaled_zones[name] = scaled
+            self._scaled_zone_polygons = scaled_zones
+            self._scaled_spatial_key = key
+
+    def _resolve_zone_name(self, x: float, y: float, frame_w: int, frame_h: int) -> str:
+        self._ensure_scaled_spatial_polygons(frame_w, frame_h)
+        with self._state_lock:
+            zone_polygons = list(self._scaled_zone_polygons.items())
+            fence_polygon = self._scaled_fence_polygon
+
+        for zone_name, contour in zone_polygons:
+            inside = cv2.pointPolygonTest(contour, (float(x), float(y)), False)
+            if inside >= 0:
+                return str(zone_name)
+
+        if fence_polygon is not None:
+            inside_fence = cv2.pointPolygonTest(fence_polygon, (float(x), float(y)), False)
+            if inside_fence < 0:
+                return "outside"
+        return "unknown"
+
+    def _update_position_on_motion(self, frame: np.ndarray, now: datetime) -> None:
+        with self._state_lock:
+            downscale_width = int(self._analysis_downscale_width)
+            blur_kernel = int(self._analysis_blur_kernel)
+            diff_threshold = int(self._analysis_diff_threshold)
+            min_motion_ratio = float(self._analysis_min_motion_ratio)
+            prev_gray = self._position_prev_gray
+
+        gray = self._preprocess_motion_frame(frame, downscale_width=downscale_width, blur_kernel=blur_kernel)
+        if prev_gray is None or prev_gray.shape != gray.shape:
+            with self._state_lock:
+                self._position_prev_gray = gray
+            return
+
+        diff = cv2.absdiff(prev_gray, gray)
+        _, mask = cv2.threshold(diff, diff_threshold, 255, cv2.THRESH_BINARY)
+        cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8), dst=mask, iterations=1)
+        motion_pixels = int(np.count_nonzero(mask))
+        motion_ratio = float(motion_pixels) / float(max(mask.size, 1))
+
+        with self._state_lock:
+            self._position_prev_gray = gray
+        if motion_ratio < min_motion_ratio:
+            return
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return
+        contour = max(contours, key=cv2.contourArea)
+        area = float(cv2.contourArea(contour))
+        if area < 8.0:
+            return
+        moments = cv2.moments(contour)
+        if moments.get("m00", 0.0) <= 1e-6:
+            return
+        cx = float(moments["m10"] / moments["m00"])
+        cy = float(moments["m01"] / moments["m00"])
+
+        frame_h, frame_w = frame.shape[:2]
+        scale_x = float(frame_w / max(mask.shape[1], 1))
+        scale_y = float(frame_h / max(mask.shape[0], 1))
+        x = float(np.clip(cx * scale_x, 0, frame_w - 1))
+        y = float(np.clip(cy * scale_y, 0, frame_h - 1))
+        zone = self._resolve_zone_name(x=x, y=y, frame_w=frame_w, frame_h=frame_h)
+
+        position = {
+            "timestamp": now.isoformat(),
+            "x": int(round(x)),
+            "y": int(round(y)),
+            "zone": zone,
+            "motion_ratio": round(motion_ratio, 6),
+            "motion_pixels": motion_pixels,
+        }
+        with self._state_lock:
+            self._current_position = position
 
     def _record_frame(self, frame: np.ndarray, now: datetime, now_mono: float) -> None:
         settings = self._settings

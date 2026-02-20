@@ -13,7 +13,7 @@ import numpy as np
 from hamsterpi.algorithms.behavioral_logging import BehavioralLogger
 from hamsterpi.algorithms.environment_analysis import EnvironmentAnalyzer
 from hamsterpi.algorithms.inventory_watch import InventoryWatcher
-from hamsterpi.algorithms.motion_trigger import MotionTriggeredRecorder
+from hamsterpi.algorithms.motion_trigger import MotionChangeAnalyzer
 from hamsterpi.algorithms.spatial_analytics import SpatialAnalyzer
 from hamsterpi.algorithms.virtual_odometer import VirtualOdometer
 from hamsterpi.algorithms.visual_health import VisualHealthScanner
@@ -104,21 +104,13 @@ class HamsterVisionPipeline:
             max_history=max(120, config.runtime.max_frame_results),
         )
 
-        self.motion_trigger: Optional[MotionTriggeredRecorder] = None
+        self.motion_analyzer: Optional[MotionChangeAnalyzer] = None
         if config.motion_trigger.enabled:
-            self.motion_trigger = MotionTriggeredRecorder(
+            self.motion_analyzer = MotionChangeAnalyzer(
                 downscale_width=config.motion_trigger.downscale_width,
                 blur_kernel=config.motion_trigger.blur_kernel,
                 diff_threshold=config.motion_trigger.diff_threshold,
                 min_motion_ratio=config.motion_trigger.min_motion_ratio,
-                start_trigger_frames=config.motion_trigger.start_trigger_frames,
-                stop_trigger_frames=config.motion_trigger.stop_trigger_frames,
-                min_capture_seconds=config.motion_trigger.min_capture_seconds,
-                cool_down_seconds=config.motion_trigger.cool_down_seconds,
-                output_dir=config.motion_trigger.output_dir,
-                record_video=config.motion_trigger.record_video,
-                output_fps=config.motion_trigger.output_fps,
-                codec=config.motion_trigger.codec,
             )
 
         self.notifier = MacNotifier(command=config.alerts.mac_notifier_command)
@@ -870,11 +862,12 @@ class HamsterVisionPipeline:
 
         motion_payload = None
         should_analyze = True
-        if self.motion_trigger is not None:
-            motion_state = self.motion_trigger.update(analysis_frame, timestamp)
+        if self.motion_analyzer is not None:
+            motion_state = self.motion_analyzer.update(analysis_frame, timestamp)
             motion_payload = motion_state.to_dict()
             if not self.always_analyze:
-                should_analyze = motion_state.capture_active or motion_state.is_motion or motion_state.start_capture
+                # Continuous capture, analyze only when scene motion changes.
+                should_analyze = motion_state.is_motion
 
         if not should_analyze:
             return {
@@ -1021,8 +1014,6 @@ class HamsterVisionPipeline:
                 if (
                     not self.config.runtime.low_memory_mode
                     or not payload.get("skipped")
-                    or (payload.get("motion") or {}).get("start_capture")
-                    or (payload.get("motion") or {}).get("stop_capture")
                 ):
                     frames.append(payload)
 
@@ -1031,8 +1022,8 @@ class HamsterVisionPipeline:
                     break
         finally:
             cap.release()
-            if self.motion_trigger is not None:
-                self.motion_trigger.close()
+            if self.motion_analyzer is not None:
+                self.motion_analyzer.close()
 
         trajectory = self.spatial.trajectory()
         if self.config.runtime.low_memory_mode and len(trajectory) > max_items:
@@ -1101,6 +1092,5 @@ class HamsterVisionPipeline:
                 "schedule": self.behavior.schedule_summary(),
                 "environment": self.environment.summary(),
                 "environment_history": self.environment.history(),
-                "motion_segments": self.motion_trigger.segments() if self.motion_trigger else [],
             },
         }

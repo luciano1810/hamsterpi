@@ -23,7 +23,7 @@ HamsterPi is a Raspberry Pi Zero 2W friendly hamster monitoring and analytics st
 8. **Featured photo + feedback loop**: auto pick best hamster frame and re-rank by good/bad feedback
 9. **Inventory watch**: water level, food residue, gnaw wear
 10. **Behavior and environment analytics**: schedule, grooming/digging, anxiety, lighting/cleanliness/bedding
-11. **Motion-triggered capture**: record only when scene changes to reduce CPU/storage
+11. **Motion-change driven analysis**: keep continuous capture and only run analysis when scene changes are detected
 12. **Real-mode loop recording**: CSI stream + segmented loop recording + max-storage auto pruning, with per-frame timestamp logs
 
 ## Raspberry Pi Zero 2W Focus
@@ -39,7 +39,7 @@ Defaults are tuned for 512MB memory:
 ## Project Layout
 
 ```text
-config/config.yaml                   # video path, VLM, runtime, motion trigger, zones
+config/config.yaml                   # video path, VLM, runtime, motion detection, zones
 hamsterpi/config.py                  # typed config loader
 hamsterpi/pipeline.py                # low-memory video pipeline (with perspective mapping)
 hamsterpi/simulator.py               # synthetic 24h data generator

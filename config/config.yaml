@@ -38,14 +38,6 @@ motion_trigger:
   blur_kernel: 5
   diff_threshold: 24
   min_motion_ratio: 0.006
-  start_trigger_frames: 2
-  stop_trigger_frames: 15
-  min_capture_seconds: 1.5
-  cool_down_seconds: 1
-  output_dir: ./captures
-  record_video: true
-  output_fps: 8
-  codec: mp4v
 environment:
   enabled: true
   sample_every_nth_frame: 5

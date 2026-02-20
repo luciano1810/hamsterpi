@@ -347,7 +347,6 @@ def _empty_dashboard_payload(config: SystemConfig, source: str, status_message: 
             "health_risk_level": "unknown",
             "environment_comfort_index": 0.0,
             "environment_risk_level": "unknown",
-            "capture_segments": 0,
         },
         "timeseries": [],
         "odometer": {
@@ -388,6 +387,7 @@ def _empty_dashboard_payload(config: SystemConfig, source: str, status_message: 
         },
         "overview": {
             "featured_photo": None,
+            "current_position": None,
             "featured_photo_feedback": {
                 "good_count": 0,
                 "bad_count": 0,
@@ -396,7 +396,7 @@ def _empty_dashboard_payload(config: SystemConfig, source: str, status_message: 
                 "last_candidate_id": "",
             },
         },
-        "motion": {"series": [], "segments": []},
+        "motion": {"series": []},
         "alerts": [],
     }
 
@@ -457,9 +457,6 @@ def _dashboard_from_pipeline_result(result: Dict[str, Any], config: SystemConfig
                     "timestamp": ts,
                     "motion_ratio": float(motion.get("motion_ratio", 0.0)),
                     "is_motion": bool(motion.get("is_motion", False)),
-                    "capture_active": bool(motion.get("capture_active", False)),
-                    "start_capture": bool(motion.get("start_capture", False)),
-                    "stop_capture": bool(motion.get("stop_capture", False)),
                 }
             )
 
@@ -624,7 +621,7 @@ def _dashboard_from_pipeline_result(result: Dict[str, Any], config: SystemConfig
                 "anxiety_index": round(anxiety, 4),
                 "comfort_index": round((latest_environment or {}).get("comfort_index", 0.0), 4),
                 "motion_ratio": round(float((motion or {}).get("motion_ratio", 0.0)), 5),
-                "capture_active": bool((motion or {}).get("capture_active", False)),
+                "is_motion": bool((motion or {}).get("is_motion", False)),
             }
         )
 
@@ -756,6 +753,12 @@ def _dashboard_from_pipeline_result(result: Dict[str, Any], config: SystemConfig
     alerts = sorted(alerts, key=lambda x: x["timestamp"])
     featured_photo_raw = summary.get("featured_photo")
     featured_photo = featured_photo_raw if isinstance(featured_photo_raw, dict) else None
+    current_position = {
+        "timestamp": str(latest.get("timestamp", "")),
+        "x": latest.get("x"),
+        "y": latest.get("y"),
+        "zone": str(latest.get("zone", "unknown") or "unknown"),
+    }
 
     return {
         "generated_at": datetime.now().isoformat(),
@@ -793,7 +796,6 @@ def _dashboard_from_pipeline_result(result: Dict[str, Any], config: SystemConfig
             "health_risk_level": (latest_health or {}).get("risk_level", "unknown"),
             "environment_comfort_index": float((latest_environment or {}).get("comfort_index", 0.0)),
             "environment_risk_level": str((latest_environment or {}).get("risk_level", "unknown")),
-            "capture_segments": len(summary.get("motion_segments", [])),
         },
         "timeseries": timeseries,
         "odometer": {
@@ -848,6 +850,7 @@ def _dashboard_from_pipeline_result(result: Dict[str, Any], config: SystemConfig
         },
         "overview": {
             "featured_photo": featured_photo,
+            "current_position": current_position,
             "featured_photo_feedback": {
                 "good_count": 0,
                 "bad_count": 0,
@@ -856,10 +859,7 @@ def _dashboard_from_pipeline_result(result: Dict[str, Any], config: SystemConfig
                 "last_candidate_id": "",
             },
         },
-        "motion": {
-            "series": motion_series,
-            "segments": summary.get("motion_segments", []),
-        },
+        "motion": {"series": motion_series},
         "alerts": alerts[-300:],
     }
 
@@ -1248,6 +1248,7 @@ class DashboardState:
             payload["meta"]["uploaded_analyzed_at"] = self.uploaded_analyzed_at.isoformat() if self.uploaded_analyzed_at else ""
             payload["meta"]["uploaded_zone_required"] = self.uploaded_zone_required
             payload["meta"]["real_camera"] = real_snapshot
+            payload["overview"]["current_position"] = real_snapshot.get("current_position")
             self.payload = payload
             return payload
 

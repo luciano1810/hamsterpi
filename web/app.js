@@ -41,7 +41,7 @@ const I18N = {
     page_title: "HamsterPi 监控台",
     hero_eyebrow: "仓鼠行为智能分析",
     hero_title: "HamsterPi 监控台",
-    hero_sub: "面向 Pi Zero 2W 的低内存方案，支持虚拟数据、初始化圈区、运动触发拍摄、行为与环境分析。",
+    hero_sub: "面向 Pi Zero 2W 的低内存方案，支持虚拟数据、初始化圈区、持续循环录制、行为与环境分析。",
     btn_refresh: "刷新虚拟数据",
     btn_auto_on: "自动刷新：开",
     btn_auto_off: "自动刷新：关",
@@ -86,8 +86,8 @@ const I18N = {
     section4_desc: "水位、粮食余量、藏粮热点和磨牙损耗",
     section5_title: "5. 行为习性与作息统计",
     section5_desc: "起居规律、洗脸频率、刻板行为与挖掘时长",
-    section6_title: "6. 生活环境与运动触发拍摄",
-    section6_desc: "光照、清洁、垫料舒适度与画面变动触发录制",
+    section6_title: "6. 生活环境与运动分析",
+    section6_desc: "光照、清洁、垫料舒适度与画面变动分析",
     chart_speed_rpm: "速度与 RPM 时间线（24h）",
     chart_hourly_distance: "小时里程 + 跑停切换次数",
     chart_direction: "方向分布",
@@ -107,8 +107,7 @@ const I18N = {
     chart_schedule: "每日作息快照",
     chart_env_comfort: "环境舒适度趋势",
     chart_env_factors: "环境因子分项",
-    chart_motion: "运动比率与录制状态",
-    chart_segments: "录制片段",
+    chart_motion: "运动比率与分析触发",
     alerts_title: "告警流",
     alerts_desc: "来自越界、健康、补给与环境规则的实时告警",
     overview_photo_title: "仓鼠精选照片",
@@ -135,6 +134,8 @@ const I18N = {
     overview_metric_step: "抽帧步长",
     overview_metric_bev: "透视映射",
     overview_metric_analyzed_at: "分析时间",
+    overview_metric_position: "当前位置",
+    overview_metric_position_time: "定位时间",
     overview_bev_enabled: "已启用",
     overview_bev_disabled: "未启用",
     table_time: "时间",
@@ -169,7 +170,7 @@ const I18N = {
     settings_section_app: "应用基础",
     settings_section_video: "视频输入",
     settings_section_runtime: "运行时参数",
-    settings_section_motion: "运动触发",
+    settings_section_motion: "运动检测",
     settings_section_environment: "环境分析",
     settings_section_wheel: "跑轮参数",
     settings_section_spatial: "空间区域",
@@ -183,7 +184,7 @@ const I18N = {
     settings_section_app_desc: "运行模式、演示数据来源与分析压缩参数等应用基础设置。",
     settings_section_video_desc: "视频源路径与输入帧率、分辨率设置。",
     settings_section_runtime_desc: "低内存模式、分析分辨率和帧处理节流。",
-    settings_section_motion_desc: "画面变动触发录制相关阈值和输出参数。",
+    settings_section_motion_desc: "画面变动检测阈值与分析触发参数。",
     settings_section_environment_desc: "光照、清洁与垫料舒适度分析参数。",
     settings_section_wheel_desc: "跑轮直径（用于速度估算）、ROI 与色点检测阈值。",
     settings_section_spatial_desc: "围栏、多边形区域、热区空间分析参数。",
@@ -255,7 +256,6 @@ const I18N = {
     status_video_analyzed: "视频分析完成。",
     dashboard_load_fail: "数据加载失败",
     no_alerts: "当前窗口无告警。",
-    no_segments: "当前窗口无运动触发录制片段。",
     schedule_day: "日期",
     schedule_first_out: "首次出窝",
     schedule_last_in: "最后回窝",
@@ -275,7 +275,6 @@ const I18N = {
     kpi_anxiety: "焦虑指数",
     kpi_health: "健康风险",
     kpi_env: "环境舒适度",
-    kpi_capture: "录制片段数",
     hint_wheel: "跑轮输出",
     hint_floor: "地面巡逻",
     hint_rolling: "滚动均值",
@@ -286,7 +285,6 @@ const I18N = {
     hint_behavior: "行为日志",
     hint_health: "VLM + 视觉扫描",
     hint_env: "环境分析",
-    hint_motion: "运动触发",
     dir_forward: "正向",
     dir_reverse: "反向",
     dir_idle: "静止",
@@ -312,7 +310,7 @@ const I18N = {
     legend_cleanliness: "清洁度",
     legend_bedding: "垫料均匀度",
     legend_motion_ratio: "运动比率",
-    legend_capture_active: "录制中",
+    legend_motion_flag: "运动触发",
     legend_trajectory_path: "巡逻路径",
     legend_trajectory_direction: "移动方向",
     legend_trajectory_start: "起点",
@@ -328,7 +326,7 @@ const I18N = {
     axis_count: "计数",
     axis_minutes: "分钟",
     axis_ratio: "比率",
-    axis_capture: "录制",
+    axis_motion_flag: "触发",
     level_high: "高",
     level_medium: "中",
     level_low: "低",
@@ -336,7 +334,6 @@ const I18N = {
     alert_threshold: "告警阈值",
     good_line: "良好线",
     risk_line: "风险线",
-    capture_duration: "时长",
     point_label: "点",
     done_mark: "完成",
     source_video: "视频首帧",
@@ -365,7 +362,7 @@ const I18N = {
     page_title: "HamsterPi Console",
     hero_eyebrow: "Hamster Behavior Intelligence",
     hero_title: "HamsterPi Monitoring Console",
-    hero_sub: "Low-memory pipeline for Pi Zero 2W with synthetic data, zone initialization, motion-triggered capture, behavior and environment analytics.",
+    hero_sub: "Low-memory pipeline for Pi Zero 2W with synthetic data, zone initialization, continuous loop recording, behavior and environment analytics.",
     btn_refresh: "Refresh Synthetic Data",
     btn_auto_on: "Auto Refresh: On",
     btn_auto_off: "Auto Refresh: Off",
@@ -410,8 +407,8 @@ const I18N = {
     section4_desc: "Water level, food residue, hoard hotspots and gnaw wear",
     section5_title: "5. Behavioral Logging",
     section5_desc: "Daily schedule, grooming, stereotypy and digging duration",
-    section6_title: "6. Environment & Motion Trigger",
-    section6_desc: "Lighting, cleanliness, bedding comfort and motion-triggered recording",
+    section6_title: "6. Environment & Motion Analysis",
+    section6_desc: "Lighting, cleanliness, bedding comfort and motion-change analysis",
     chart_speed_rpm: "Speed & RPM Timeline (24h)",
     chart_hourly_distance: "Hourly Distance + Stop-Go Events",
     chart_direction: "Direction Distribution",
@@ -431,8 +428,7 @@ const I18N = {
     chart_schedule: "Daily Schedule",
     chart_env_comfort: "Environment Comfort Trend",
     chart_env_factors: "Environment Factors",
-    chart_motion: "Motion Ratio & Capture State",
-    chart_segments: "Capture Segments",
+    chart_motion: "Motion Ratio & Analysis Trigger",
     alerts_title: "Alerts Stream",
     alerts_desc: "Realtime alerts from escape, health, inventory and environment rules",
     overview_photo_title: "Featured Hamster Photo",
@@ -459,6 +455,8 @@ const I18N = {
     overview_metric_step: "Frame Step",
     overview_metric_bev: "Perspective Mapping",
     overview_metric_analyzed_at: "Analyzed At",
+    overview_metric_position: "Current Position",
+    overview_metric_position_time: "Position Time",
     overview_bev_enabled: "Enabled",
     overview_bev_disabled: "Disabled",
     table_time: "Time",
@@ -493,7 +491,7 @@ const I18N = {
     settings_section_app: "App Basics",
     settings_section_video: "Video Input",
     settings_section_runtime: "Runtime",
-    settings_section_motion: "Motion Trigger",
+    settings_section_motion: "Motion Detection",
     settings_section_environment: "Environment",
     settings_section_wheel: "Wheel",
     settings_section_spatial: "Spatial",
@@ -507,7 +505,7 @@ const I18N = {
     settings_section_app_desc: "Run mode, demo source and analysis compression settings.",
     settings_section_video_desc: "Video source path, fps and frame dimensions.",
     settings_section_runtime_desc: "Low-memory profile and frame processing throttling.",
-    settings_section_motion_desc: "Motion-trigger thresholds and capture output settings.",
+    settings_section_motion_desc: "Motion-change thresholds and analysis trigger settings.",
     settings_section_environment_desc: "Lighting, cleanliness and bedding analysis parameters.",
     settings_section_wheel_desc: "Wheel diameter (used for speed estimation), ROI and marker detection settings.",
     settings_section_spatial_desc: "Fence polygons, zones and spatial analytics parameters.",
@@ -579,7 +577,6 @@ const I18N = {
     status_video_analyzed: "Video analysis completed.",
     dashboard_load_fail: "Failed to load dashboard data",
     no_alerts: "No alerts in current window.",
-    no_segments: "No motion-triggered segment in this window.",
     schedule_day: "Day",
     schedule_first_out: "First Out",
     schedule_last_in: "Last In",
@@ -599,7 +596,6 @@ const I18N = {
     kpi_anxiety: "Anxiety Index",
     kpi_health: "Health Risk",
     kpi_env: "Environment Comfort",
-    kpi_capture: "Capture Segments",
     hint_wheel: "Wheel output",
     hint_floor: "Floor tracking",
     hint_rolling: "Rolling average",
@@ -610,7 +606,6 @@ const I18N = {
     hint_behavior: "Behavior logging",
     hint_health: "VLM + visual scan",
     hint_env: "Environment analysis",
-    hint_motion: "Motion-triggered",
     dir_forward: "Forward",
     dir_reverse: "Reverse",
     dir_idle: "Idle",
@@ -636,7 +631,7 @@ const I18N = {
     legend_cleanliness: "Cleanliness",
     legend_bedding: "Bedding",
     legend_motion_ratio: "Motion Ratio",
-    legend_capture_active: "Capture Active",
+    legend_motion_flag: "Motion Trigger",
     legend_trajectory_path: "Patrol Path",
     legend_trajectory_direction: "Direction",
     legend_trajectory_start: "Start",
@@ -652,7 +647,7 @@ const I18N = {
     axis_count: "count",
     axis_minutes: "minutes",
     axis_ratio: "ratio",
-    axis_capture: "capture",
+    axis_motion_flag: "trigger",
     level_high: "High",
     level_medium: "Medium",
     level_low: "Low",
@@ -660,7 +655,6 @@ const I18N = {
     alert_threshold: "Alert threshold",
     good_line: "Good",
     risk_line: "Risk",
-    capture_duration: "Duration",
     point_label: "point",
     done_mark: "done",
     source_video: "video frame",
@@ -796,19 +790,11 @@ const SETTINGS_FIELD_LABELS = {
   "runtime.max_analysis_height": { "zh-CN": "分析最大高度 (px)", "en-US": "Max Analysis Height (px)" },
   "runtime.max_fps": { "zh-CN": "最大处理帧率 (FPS)", "en-US": "Max Processing FPS" },
   "runtime.store_debug_frames": { "zh-CN": "保存调试帧", "en-US": "Store Debug Frames" },
-  "motion_trigger.enabled": { "zh-CN": "启用运动触发", "en-US": "Enable Motion Trigger" },
+  "motion_trigger.enabled": { "zh-CN": "启用运动检测", "en-US": "Enable Motion Detection" },
   "motion_trigger.downscale_width": { "zh-CN": "检测降采样宽度 (px)", "en-US": "Detection Downscale Width (px)" },
   "motion_trigger.blur_kernel": { "zh-CN": "模糊核大小", "en-US": "Blur Kernel Size" },
   "motion_trigger.diff_threshold": { "zh-CN": "差分阈值", "en-US": "Difference Threshold" },
   "motion_trigger.min_motion_ratio": { "zh-CN": "最小运动比例", "en-US": "Minimum Motion Ratio" },
-  "motion_trigger.start_trigger_frames": { "zh-CN": "开始触发帧数", "en-US": "Start Trigger Frames" },
-  "motion_trigger.stop_trigger_frames": { "zh-CN": "停止触发帧数", "en-US": "Stop Trigger Frames" },
-  "motion_trigger.min_capture_seconds": { "zh-CN": "最短录制时长 (秒)", "en-US": "Min Capture Duration (s)" },
-  "motion_trigger.cool_down_seconds": { "zh-CN": "冷却时间 (秒)", "en-US": "Cooldown (s)" },
-  "motion_trigger.output_dir": { "zh-CN": "录制输出目录", "en-US": "Capture Output Directory" },
-  "motion_trigger.record_video": { "zh-CN": "启用视频录制", "en-US": "Record Video" },
-  "motion_trigger.output_fps": { "zh-CN": "录制帧率 (FPS)", "en-US": "Capture FPS" },
-  "motion_trigger.codec": { "zh-CN": "录制编码", "en-US": "Capture Codec" },
   "environment.enabled": { "zh-CN": "启用环境分析", "en-US": "Enable Environment Analysis" },
   "environment.sample_every_nth_frame": { "zh-CN": "每 N 帧采样 1 帧", "en-US": "Sample Every Nth Frame" },
   "environment.low_light_threshold": { "zh-CN": "低光阈值", "en-US": "Low Light Threshold" },
@@ -901,17 +887,7 @@ const SETTINGS_FIELD_OPTIONS = {
   "motion_trigger.downscale_width": [160, 240, 320, 480, 640],
   "motion_trigger.blur_kernel": [3, 5, 7, 9, 11],
   "motion_trigger.diff_threshold": [12, 18, 24, 30, 36, 48],
-  "motion_trigger.start_trigger_frames": [1, 2, 3, 4, 5],
-  "motion_trigger.stop_trigger_frames": [5, 10, 15, 20, 30, 45],
-  "motion_trigger.min_capture_seconds": [0.5, 1, 1.5, 2, 3, 5],
-  "motion_trigger.cool_down_seconds": [0, 0.5, 1, 2, 3, 5],
-  "motion_trigger.output_fps": [5, 8, 10, 12, 15, 24, 30],
-  "motion_trigger.codec": [
-    { value: "mp4v", label: { "zh-CN": "MP4V（通用）", "en-US": "MP4V (Generic)" } },
-    { value: "avc1", label: { "zh-CN": "AVC1（H.264）", "en-US": "AVC1 (H.264)" } },
-    { value: "XVID", label: { "zh-CN": "XVID", "en-US": "XVID" } },
-    { value: "MJPG", label: { "zh-CN": "MJPG", "en-US": "MJPG" } },
-  ],
+  "motion_trigger.min_motion_ratio": [0.002, 0.004, 0.006, 0.01, 0.015, 0.02],
   "environment.sample_every_nth_frame": [1, 2, 3, 5, 8, 10],
   "environment.low_light_threshold": [0.1, 0.15, 0.2, 0.22, 0.25, 0.3],
   "environment.high_light_threshold": [0.75, 0.8, 0.85, 0.9, 0.95],
@@ -2087,7 +2063,6 @@ function renderKpis(summary = {}) {
     [t("kpi_anxiety"), pct(summary.anxiety_index), t("hint_behavior")],
     [t("kpi_health"), String(summary.health_risk_level || "unknown").toUpperCase(), t("hint_health")],
     [t("kpi_env"), pct(summary.environment_comfort_index), t("hint_env")],
-    [t("kpi_capture"), `${summary.capture_segments ?? 0}`, t("hint_motion")],
   ];
 
   kpiGrid.innerHTML = entries
@@ -2765,37 +2740,21 @@ function renderMotion(data) {
   charts["chart-motion"].setOption(
     setCommonChartStyle({
       xAxis: { type: "category", data: series.map((x) => toHour(x.timestamp)), axisLabel: { color: c.axis, interval: 120 } },
-      yAxis: [{ type: "value", min: 0, max: 0.1, name: t("axis_ratio") }, { type: "value", min: 0, max: 1, name: t("axis_capture") }],
-      legend: { data: [t("legend_motion_ratio"), t("legend_capture_active")], textStyle: { color: c.legend } },
+      yAxis: [{ type: "value", min: 0, max: 0.1, name: t("axis_ratio") }, { type: "value", min: 0, max: 1, name: t("axis_motion_flag") }],
+      legend: { data: [t("legend_motion_ratio"), t("legend_motion_flag")], textStyle: { color: c.legend } },
       series: [
         { type: "line", name: t("legend_motion_ratio"), smooth: true, showSymbol: false, data: series.map((x) => x.motion_ratio), lineStyle: { color: c.orange } },
         {
           type: "bar",
-          name: t("legend_capture_active"),
+          name: t("legend_motion_flag"),
           yAxisIndex: 1,
-          data: series.map((x) => (x.capture_active ? 1 : 0)),
+          data: series.map((x) => (x.is_motion ? 1 : 0)),
           barMaxWidth: 10,
           itemStyle: { color: c.captureBar, borderRadius: [2, 2, 0, 0] },
         },
       ],
     })
   );
-
-  const segments = data.motion?.segments || [];
-  const box = document.getElementById("capture-segments");
-  if (segments.length === 0) {
-    box.innerHTML = `<div class="segment-chip">${t("no_segments")}</div>`;
-    return;
-  }
-
-  box.innerHTML = segments
-    .slice(-20)
-    .reverse()
-    .map(
-      (item) =>
-        `<div class="segment-chip"><strong>${new Date(item.start).toLocaleTimeString()} - ${new Date(item.end).toLocaleTimeString()}</strong><br/>${t("capture_duration")}: ${fmtNumber(item.duration_s, 1)} s</div>`
-    )
-    .join("");
 }
 
 function renderFeaturedPhoto(data) {
@@ -2925,6 +2884,17 @@ function renderOverviewQuickStats(data) {
   const stepText = Number.isFinite(step) && step > 0 ? `1/${Math.round(step)}` : "-";
   const bevText = meta.spatial_bev_enabled ? t("overview_bev_enabled") : t("overview_bev_disabled");
   const analyzedAt = meta.uploaded_analyzed_at ? new Date(meta.uploaded_analyzed_at).toLocaleString() : "-";
+  const currentPosition = data.overview?.current_position || null;
+  const positionX = Number(currentPosition?.x);
+  const positionY = Number(currentPosition?.y);
+  const positionZone = String(currentPosition?.zone || "unknown");
+  let positionText = "-";
+  if (Number.isFinite(positionX) && Number.isFinite(positionY)) {
+    positionText = `${zoneLabel(positionZone)} (${Math.round(positionX)}, ${Math.round(positionY)})`;
+  } else if (positionZone && positionZone !== "unknown") {
+    positionText = zoneLabel(positionZone);
+  }
+  const positionTime = currentPosition?.timestamp ? new Date(currentPosition.timestamp).toLocaleString() : "-";
 
   const cards = [
     [t("overview_metric_source"), sourceText],
@@ -2933,6 +2903,8 @@ function renderOverviewQuickStats(data) {
     [t("overview_metric_step"), stepText],
     [t("overview_metric_bev"), bevText],
     [t("overview_metric_analyzed_at"), analyzedAt],
+    [t("overview_metric_position"), positionText],
+    [t("overview_metric_position_time"), positionTime],
   ];
 
   box.innerHTML = cards
