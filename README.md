@@ -88,8 +88,8 @@ uvicorn hamsterpi.log_viewer:app --host 0.0.0.0 --port 8002
 ## 运行模式与上传流程
 
 - `app.run_mode`
-  - `demo`（默认）
-  - `real`（真实摄像头）
+  - `demo`
+  - `real`（默认，真实摄像头）
 - `app.demo_source`（`run_mode=demo` 时生效）
   - `virtual`（模拟数据）
   - `uploaded_video`（上传视频分析）
@@ -102,7 +102,7 @@ uvicorn hamsterpi.log_viewer:app --host 0.0.0.0 --port 8002
 
 `real` 模式要点：
 
-1. 在设置 `video.real_camera_device` 选择 `auto / picamera2 / 0 / /dev/video0`
+1. 在设置 `video.real_camera_device` 选择 `rpicam / auto / picamera2 / 0 / /dev/video0`
 2. 实时页自动切换为 `/api/real/live-stream` 摄像头流
 3. 循环录制目录 `video.real_record_output_dir`
 4. 最大占用空间 `video.real_record_max_storage_gb`（超限自动删最旧片段）

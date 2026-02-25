@@ -19,7 +19,7 @@ from hamsterpi.algorithms.virtual_odometer import VirtualOdometer
 from hamsterpi.algorithms.visual_health import VisualHealthScanner
 from hamsterpi.config import SystemConfig
 from hamsterpi.logging_system import get_logger
-from hamsterpi.notifier import MacNotifier
+from hamsterpi.notifier import build_notifier
 from hamsterpi.video_capture import apply_video_orientation, open_video_capture
 
 LOGGER = get_logger(__name__)
@@ -113,7 +113,15 @@ class HamsterVisionPipeline:
                 min_motion_ratio=config.motion_trigger.min_motion_ratio,
             )
 
-        self.notifier = MacNotifier(command=config.alerts.mac_notifier_command)
+        self.notifier = build_notifier(
+            provider=config.alerts.notifier_provider,
+            cooldown_seconds=config.alerts.notifier_cooldown_seconds,
+            mac_command=config.alerts.mac_notifier_command,
+            bark_server=config.alerts.bark_server,
+            bark_device_key=config.alerts.bark_device_key,
+            bark_group=config.alerts.bark_group,
+            bark_sound=config.alerts.bark_sound,
+        )
 
         self._last_frame_ts: Optional[datetime] = None
         self._last_health_capture: Optional[datetime] = None

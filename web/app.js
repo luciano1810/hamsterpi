@@ -168,6 +168,7 @@ const I18N = {
     settings_sub: "左侧选择配置分组，右侧编辑具体配置项。",
     settings_section_title: "配置分组",
     settings_section_app: "应用基础",
+    settings_section_hamster: "仓鼠信息",
     settings_section_video: "视频输入",
     settings_section_runtime: "运行时参数",
     settings_section_motion: "运动检测",
@@ -177,11 +178,13 @@ const I18N = {
     settings_section_health: "健康扫描",
     settings_section_vlm: "VLM API 配置",
     settings_section_inventory: "资源监控",
+    settings_section_notifications: "通知管理",
     settings_section_alerts: "告警规则",
     settings_section_frontend: "前端展示",
     settings_section_logging: "日志系统",
     settings_section_demo_tools: "演示工具",
     settings_section_app_desc: "运行模式、演示数据来源与分析压缩参数等应用基础设置。",
+    settings_section_hamster_desc: "仓鼠基础档案设置，包括昵称、年龄、品种、性别等。",
     settings_section_video_desc: "视频源路径与输入帧率、分辨率设置。",
     settings_section_runtime_desc: "低内存模式、分析分辨率和帧处理节流。",
     settings_section_motion_desc: "画面变动检测阈值与分析触发参数。",
@@ -191,7 +194,8 @@ const I18N = {
     settings_section_health_desc: "健康扫描周期和体型基线设置。",
     settings_section_vlm_desc: "配置模型服务商、模型名、接口地址与鉴权环境变量。",
     settings_section_inventory_desc: "水位/食量/磨牙区域与告警阈值。",
-    settings_section_alerts_desc: "越界通知与行为风险阈值配置。",
+    settings_section_notifications_desc: "通知方式、冷却时间与 Bark 推送参数配置。",
+    settings_section_alerts_desc: "行为风险阈值配置。",
     settings_section_frontend_desc: "面板刷新周期、语言与历史窗口。",
     settings_section_logging_desc: "日志级别、落盘路径和滚动策略。",
     settings_section_demo_tools_desc: "上传完整视频，或选择已上传视频后进入圈区；圈区保存后自动压缩并分析。",
@@ -206,6 +210,12 @@ const I18N = {
     mode_real: "真实模式（CSI 摄像头）",
     source_virtual: "虚拟数据",
     source_uploaded_video: "上传视频",
+    hamster_sex_unknown: "未知",
+    hamster_sex_male: "公",
+    hamster_sex_female: "母",
+    notifier_provider_none: "关闭通知",
+    notifier_provider_mac: "macOS 本地通知",
+    notifier_provider_bark: "Bark 推送",
     settings_invalid_number: "请输入有效数字",
     btn_upload_video: "上传视频",
     btn_use_uploaded_video: "使用并初始化圈区",
@@ -489,6 +499,7 @@ const I18N = {
     settings_sub: "Choose a config group on the left and edit concrete fields on the right.",
     settings_section_title: "Config Groups",
     settings_section_app: "App Basics",
+    settings_section_hamster: "Hamster Profile",
     settings_section_video: "Video Input",
     settings_section_runtime: "Runtime",
     settings_section_motion: "Motion Detection",
@@ -498,11 +509,13 @@ const I18N = {
     settings_section_health: "Health Core",
     settings_section_vlm: "VLM API",
     settings_section_inventory: "Inventory",
+    settings_section_notifications: "Notifications",
     settings_section_alerts: "Alerts",
     settings_section_frontend: "Frontend",
     settings_section_logging: "Logging",
     settings_section_demo_tools: "Demo Tools",
     settings_section_app_desc: "Run mode, demo source and analysis compression settings.",
+    settings_section_hamster_desc: "Basic hamster profile fields such as name, age, breed and sex.",
     settings_section_video_desc: "Video source path, fps and frame dimensions.",
     settings_section_runtime_desc: "Low-memory profile and frame processing throttling.",
     settings_section_motion_desc: "Motion-change thresholds and analysis trigger settings.",
@@ -512,7 +525,8 @@ const I18N = {
     settings_section_health_desc: "Health scan interval and body-area baseline.",
     settings_section_vlm_desc: "Provider/model/endpoint/api key env and request timeout.",
     settings_section_inventory_desc: "Water/food/gnaw ROIs and refill thresholds.",
-    settings_section_alerts_desc: "Escape notifier and risk threshold settings.",
+    settings_section_notifications_desc: "Notification channel, cooldown and Bark push parameters.",
+    settings_section_alerts_desc: "Behavior and health risk thresholds.",
     settings_section_frontend_desc: "Dashboard refresh interval, language and history window.",
     settings_section_logging_desc: "Log level, file path and rotation policy.",
     settings_section_demo_tools_desc: "Upload a full video, or reuse an uploaded video, then save zones to trigger auto compression and analysis.",
@@ -527,6 +541,12 @@ const I18N = {
     mode_real: "Real (CSI Camera)",
     source_virtual: "Virtual Data",
     source_uploaded_video: "Uploaded Video Analysis",
+    hamster_sex_unknown: "Unknown",
+    hamster_sex_male: "Male",
+    hamster_sex_female: "Female",
+    notifier_provider_none: "Disable Notifications",
+    notifier_provider_mac: "macOS Local Notification",
+    notifier_provider_bark: "Bark Push",
     settings_invalid_number: "Please enter a valid number",
     btn_upload_video: "Upload Video",
     btn_use_uploaded_video: "Use and Initialize Zones",
@@ -689,7 +709,7 @@ let refreshTimer = null;
 let currentLanguage = "zh-CN";
 let availableLanguages = ["zh-CN", "en-US"];
 let lastDashboardData = null;
-let currentRunMode = "demo";
+let currentRunMode = "real";
 let currentDemoSource = "virtual";
 let uploadedVideoName = "";
 let uploadedVideoKey = "";
@@ -730,6 +750,14 @@ const ANALYZE_RESULT_POLL = {
   intervalMs: 3000,
   timeoutMs: 8 * 60 * 1000,
 };
+const DEFAULT_HAMSTER_PROFILE = {
+  name: "Hammy",
+  age_months: 6,
+  breed: "Dwarf",
+  sex: "unknown",
+  color: "",
+  notes: "",
+};
 
 const SETTINGS_SECTIONS = [
   {
@@ -738,6 +766,13 @@ const SETTINGS_SECTIONS = [
     includeKeys: ["run_mode", "demo_source", "demo_analysis_resolution", "demo_analysis_fps"],
     labelKey: "settings_section_app",
     descKey: "settings_section_app_desc",
+  },
+  {
+    id: "hamster",
+    path: "hamster",
+    includeKeys: ["name", "age_months", "breed", "sex", "color", "notes"],
+    labelKey: "settings_section_hamster",
+    descKey: "settings_section_hamster_desc",
   },
   { id: "video", path: "video", labelKey: "settings_section_video", descKey: "settings_section_video_desc" },
   { id: "runtime", path: "runtime", labelKey: "settings_section_runtime", descKey: "settings_section_runtime_desc" },
@@ -753,7 +788,29 @@ const SETTINGS_SECTIONS = [
   },
   { id: "health_vlm", path: "health.vlm", labelKey: "settings_section_vlm", descKey: "settings_section_vlm_desc" },
   { id: "inventory", path: "inventory", labelKey: "settings_section_inventory", descKey: "settings_section_inventory_desc" },
-  { id: "alerts", path: "alerts", labelKey: "settings_section_alerts", descKey: "settings_section_alerts_desc" },
+  {
+    id: "notifications",
+    path: "alerts",
+    includeKeys: [
+      "escape_enabled",
+      "notifier_provider",
+      "notifier_cooldown_seconds",
+      "mac_notifier_command",
+      "bark_server",
+      "bark_device_key",
+      "bark_group",
+      "bark_sound",
+    ],
+    labelKey: "settings_section_notifications",
+    descKey: "settings_section_notifications_desc",
+  },
+  {
+    id: "alerts",
+    path: "alerts",
+    includeKeys: ["max_stereotypy_index", "max_weight_change_ratio"],
+    labelKey: "settings_section_alerts",
+    descKey: "settings_section_alerts_desc",
+  },
   { id: "frontend", path: "frontend", labelKey: "settings_section_frontend", descKey: "settings_section_frontend_desc" },
   { id: "demo_tools", path: "", special: "demo_tools", labelKey: "settings_section_demo_tools", descKey: "settings_section_demo_tools_desc" },
 ];
@@ -766,6 +823,12 @@ const SETTINGS_FIELD_LABELS = {
   "app.demo_upload_dir": { "zh-CN": "演示视频目录", "en-US": "Demo Upload Directory" },
   "app.demo_analysis_resolution": { "zh-CN": "分析压缩分辨率", "en-US": "Analysis Compression Resolution" },
   "app.demo_analysis_fps": { "zh-CN": "分析压缩帧率 (FPS)", "en-US": "Analysis Compression FPS" },
+  "hamster.name": { "zh-CN": "仓鼠昵称", "en-US": "Hamster Name" },
+  "hamster.age_months": { "zh-CN": "年龄（月）", "en-US": "Age (months)" },
+  "hamster.breed": { "zh-CN": "品种", "en-US": "Breed" },
+  "hamster.sex": { "zh-CN": "性别", "en-US": "Sex" },
+  "hamster.color": { "zh-CN": "毛色", "en-US": "Coat Color" },
+  "hamster.notes": { "zh-CN": "备注", "en-US": "Notes" },
   "video.source_path": { "zh-CN": "视频源路径", "en-US": "Video Source Path" },
   "video.fps": { "zh-CN": "输入帧率 (FPS)", "en-US": "Input FPS" },
   "video.frame_width": { "zh-CN": "画面宽度 (px)", "en-US": "Frame Width (px)" },
@@ -825,7 +888,13 @@ const SETTINGS_FIELD_LABELS = {
   "inventory.low_water_threshold": { "zh-CN": "低水位阈值", "en-US": "Low Water Threshold" },
   "inventory.low_food_threshold": { "zh-CN": "低食量阈值", "en-US": "Low Food Threshold" },
   "alerts.escape_enabled": { "zh-CN": "启用越界告警", "en-US": "Enable Escape Alerts" },
+  "alerts.notifier_provider": { "zh-CN": "通知方式", "en-US": "Notification Channel" },
+  "alerts.notifier_cooldown_seconds": { "zh-CN": "通知冷却时间 (秒)", "en-US": "Notification Cooldown (s)" },
   "alerts.mac_notifier_command": { "zh-CN": "macOS 通知命令", "en-US": "macOS Notifier Command" },
+  "alerts.bark_server": { "zh-CN": "Bark 服务地址", "en-US": "Bark Server URL" },
+  "alerts.bark_device_key": { "zh-CN": "Bark Device Key", "en-US": "Bark Device Key" },
+  "alerts.bark_group": { "zh-CN": "Bark 分组", "en-US": "Bark Group" },
+  "alerts.bark_sound": { "zh-CN": "Bark 提示音", "en-US": "Bark Sound" },
   "alerts.max_stereotypy_index": { "zh-CN": "刻板行为指数上限", "en-US": "Max Stereotypy Index" },
   "alerts.max_weight_change_ratio": { "zh-CN": "体型变化比例上限", "en-US": "Max Weight Change Ratio" },
   "frontend.refresh_interval_seconds": { "zh-CN": "前端刷新间隔 (秒)", "en-US": "Frontend Refresh Interval (s)" },
@@ -851,13 +920,21 @@ const SETTINGS_FIELD_OPTIONS = {
   ],
   "app.demo_analysis_resolution": ["640x360", "854x480", "960x540", "1280x720", "1600x900", "1920x1080"],
   "app.demo_analysis_fps": [8, 10, 12, 15, 18, 20, 24, 30],
+  "hamster.sex": [
+    { value: "unknown", labelKey: "hamster_sex_unknown" },
+    { value: "male", labelKey: "hamster_sex_male" },
+    { value: "female", labelKey: "hamster_sex_female" },
+  ],
   "video.fps": [5, 8, 10, 12, 15, 24, 30],
   "video.frame_width": [320, 480, 640, 960, 1280, 1920],
   "video.frame_height": [180, 270, 360, 540, 720, 1080],
   "video.snapshot_interval_seconds": [60, 120, 300, 600, 900, 1800],
   "video.real_camera_device": [
-    { value: "auto", label: { "zh-CN": "自动 (优先 Picamera2)", "en-US": "Auto (prefer Picamera2)" } },
+    { value: "rpicam", label: { "zh-CN": "RPiCam (rpicam-vid)", "en-US": "RPiCam (rpicam-vid)" } },
+    { value: "auto", label: { "zh-CN": "自动 (优先 RPiCam)", "en-US": "Auto (prefer RPiCam)" } },
     { value: "picamera2", label: { "zh-CN": "Picamera2", "en-US": "Picamera2" } },
+    { value: "rpicam-vid", label: { "zh-CN": "rpicam-vid", "en-US": "rpicam-vid" } },
+    { value: "libcamera-vid", label: { "zh-CN": "libcamera-vid", "en-US": "libcamera-vid" } },
     { value: "0", label: { "zh-CN": "OpenCV 设备 0", "en-US": "OpenCV device 0" } },
     { value: "/dev/video0", label: { "zh-CN": "/dev/video0", "en-US": "/dev/video0" } },
     { value: "/dev/video1", label: { "zh-CN": "/dev/video1", "en-US": "/dev/video1" } },
@@ -905,6 +982,12 @@ const SETTINGS_FIELD_OPTIONS = {
   "health.vlm.timeout_seconds": [10, 15, 20, 30, 45, 60],
   "inventory.low_water_threshold": [0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4],
   "inventory.low_food_threshold": [0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4],
+  "alerts.notifier_provider": [
+    { value: "none", labelKey: "notifier_provider_none" },
+    { value: "mac", labelKey: "notifier_provider_mac" },
+    { value: "bark", labelKey: "notifier_provider_bark" },
+  ],
+  "alerts.notifier_cooldown_seconds": [10, 20, 30, 45, 60, 120, 300, 600],
   "alerts.mac_notifier_command": ["terminal-notifier", "osascript", ""],
   "alerts.max_stereotypy_index": [0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
   "alerts.max_weight_change_ratio": [0.05, 0.08, 0.1, 0.12, 0.15, 0.2],
@@ -968,6 +1051,25 @@ function deepClone(value) {
     return structuredClone(value);
   }
   return JSON.parse(JSON.stringify(value));
+}
+
+function ensureHamsterProfileDefaults(rawConfig) {
+  if (!rawConfig || typeof rawConfig !== "object") {
+    return rawConfig;
+  }
+
+  const hamster = rawConfig.hamster;
+  if (!hamster || typeof hamster !== "object" || Array.isArray(hamster)) {
+    rawConfig.hamster = deepClone(DEFAULT_HAMSTER_PROFILE);
+    return rawConfig;
+  }
+
+  for (const [key, defaultValue] of Object.entries(DEFAULT_HAMSTER_PROFILE)) {
+    if (hamster[key] === undefined || hamster[key] === null) {
+      hamster[key] = deepClone(defaultValue);
+    }
+  }
+  return rawConfig;
 }
 
 function escapeHtml(value) {
@@ -2994,7 +3096,7 @@ async function loadConfig() {
     throw new Error(`Config request failed: ${response.status}`);
   }
   const config = await response.json();
-  currentRunMode = config.app?.run_mode || "demo";
+  currentRunMode = config.app?.run_mode || "real";
   currentDemoSource = config.app?.demo_source || "virtual";
   availableLanguages = config.frontend?.available_languages || ["zh-CN", "en-US"];
   setLanguage(config.frontend?.default_language || "zh-CN");
@@ -3694,7 +3796,7 @@ function shouldForceDashboardRefresh() {
 }
 
 function syncModeFromRaw(raw) {
-  currentRunMode = raw?.app?.run_mode || "demo";
+  currentRunMode = raw?.app?.run_mode || "real";
   currentDemoSource = raw?.app?.demo_source || "virtual";
   updateModeSelectorsLabel();
   updateUploadBlockVisibility();
@@ -4513,6 +4615,7 @@ async function loadSettingsConfig() {
     }
     const payload = await response.json();
     const raw = payload.config || {};
+    ensureHamsterProfileDefaults(raw);
 
     settingsRawConfig = deepClone(raw);
     settingsWorkingConfig = deepClone(raw);
@@ -4547,6 +4650,7 @@ async function saveSettingsConfig() {
   }
 
   const raw = deepClone(settingsWorkingConfig);
+  ensureHamsterProfileDefaults(raw);
 
   const response = await fetch("/api/config/raw", {
     method: "POST",

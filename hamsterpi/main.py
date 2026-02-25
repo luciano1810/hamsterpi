@@ -1822,6 +1822,7 @@ def _build_init_mapping_preview(
 def _public_config(cfg: SystemConfig) -> Dict[str, Any]:
     return {
         "app": cfg.app.model_dump(),
+        "hamster": cfg.hamster.model_dump(),
         "video": cfg.video.model_dump(),
         "runtime": cfg.runtime.model_dump(),
         "motion_trigger": cfg.motion_trigger.model_dump(),

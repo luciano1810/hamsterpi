@@ -1,11 +1,18 @@
 app:
   title: HamsterPi Monitoring Console
   timezone: America/Los_Angeles
-  run_mode: demo
+  run_mode: real
   demo_source: uploaded_video
   demo_upload_dir: ./uploads
   demo_analysis_resolution: 1280x720
   demo_analysis_fps: 15
+hamster:
+  name: Hammy
+  age_months: 6
+  breed: Dwarf
+  sex: unknown
+  color: ''
+  notes: ''
 video:
   source_path: ./data/sample.mp4
   fps: 10
@@ -13,7 +20,7 @@ video:
   frame_height: 540
   simulate: true
   snapshot_interval_seconds: 300
-  real_camera_device: auto
+  real_camera_device: rpicam
   real_camera_rotation: 0
   real_stream_fps: 10
   real_record_enabled: true
@@ -176,7 +183,13 @@ inventory:
   low_food_threshold: 0.25
 alerts:
   escape_enabled: true
+  notifier_provider: mac
+  notifier_cooldown_seconds: 45
   mac_notifier_command: terminal-notifier
+  bark_server: https://api.day.app
+  bark_device_key: ''
+  bark_group: HamsterPi
+  bark_sound: ''
   max_stereotypy_index: 0.7
   max_weight_change_ratio: 0.12
 frontend:

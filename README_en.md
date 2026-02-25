@@ -88,8 +88,8 @@ Open:
 ## Mode Switching and Upload Flow
 
 - `app.run_mode`
-  - `demo` (default)
-  - `real` (real camera)
+  - `demo`
+  - `real` (default, real camera)
 - `app.demo_source` (effective when `run_mode=demo`)
   - `virtual` (synthetic data)
   - `uploaded_video` (uploaded video analysis)
@@ -102,7 +102,7 @@ Open:
 
 `real` mode notes:
 
-1. Choose `video.real_camera_device` as `auto / picamera2 / 0 / /dev/video0`
+1. Choose `video.real_camera_device` as `rpicam / auto / picamera2 / 0 / /dev/video0`
 2. Realtime tab switches to `/api/real/live-stream`
 3. Recording output directory: `video.real_record_output_dir`
 4. Max recording storage: `video.real_record_max_storage_gb` (oldest segments are auto-pruned)

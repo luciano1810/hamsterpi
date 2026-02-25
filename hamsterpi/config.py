@@ -14,7 +14,7 @@ Polygon = List[Point]
 class AppConfig(BaseModel):
     title: str
     timezone: str
-    run_mode: str = "demo"
+    run_mode: str = "real"
     demo_source: str = "virtual"
     demo_upload_dir: str = "./uploads"
     demo_analysis_resolution: str = "1280x720"
@@ -55,6 +55,37 @@ class AppConfig(BaseModel):
         return f"{width}x{height}"
 
 
+class HamsterProfileConfig(BaseModel):
+    name: str = "Hammy"
+    age_months: int = Field(default=6, ge=0, le=120)
+    breed: str = "Dwarf"
+    sex: str = "unknown"
+    color: str = ""
+    notes: str = ""
+
+    @field_validator("name", "breed")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("value cannot be empty")
+        return text
+
+    @field_validator("sex")
+    @classmethod
+    def validate_sex(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        allowed = {"unknown", "male", "female"}
+        if normalized not in allowed:
+            raise ValueError(f"sex must be one of {sorted(allowed)}")
+        return normalized
+
+    @field_validator("color", "notes")
+    @classmethod
+    def normalize_optional_text(cls, value: str) -> str:
+        return str(value or "").strip()
+
+
 class VideoConfig(BaseModel):
     source_path: str
     fps: int = Field(default=30, ge=1)
@@ -62,7 +93,7 @@ class VideoConfig(BaseModel):
     frame_height: int = Field(default=720, ge=1)
     simulate: bool = True
     snapshot_interval_seconds: int = Field(default=300, ge=1)
-    real_camera_device: str = "auto"
+    real_camera_device: str = "rpicam"
     real_camera_rotation: int = Field(default=0)
     real_stream_fps: int = Field(default=10, ge=1, le=30)
     real_record_enabled: bool = True
@@ -185,9 +216,36 @@ class InventoryConfig(BaseModel):
 
 class AlertsConfig(BaseModel):
     escape_enabled: bool = True
+    notifier_provider: str = "mac"
+    notifier_cooldown_seconds: int = Field(default=45, ge=1, le=3600)
     mac_notifier_command: str = "terminal-notifier"
+    bark_server: str = "https://api.day.app"
+    bark_device_key: str = ""
+    bark_group: str = "HamsterPi"
+    bark_sound: str = ""
     max_stereotypy_index: float = Field(default=0.7, ge=0.0, le=1.0)
     max_weight_change_ratio: float = Field(default=0.12, ge=0.0, le=1.0)
+
+    @field_validator("notifier_provider")
+    @classmethod
+    def validate_notifier_provider(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized in {"macos", "mac_notifier"}:
+            normalized = "mac"
+        allowed = {"none", "mac", "bark"}
+        if normalized not in allowed:
+            raise ValueError(f"notifier_provider must be one of {sorted(allowed)}")
+        return normalized
+
+    @field_validator("bark_server")
+    @classmethod
+    def normalize_bark_server(cls, value: str) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return "https://api.day.app"
+        if raw.endswith("/"):
+            raw = raw[:-1]
+        return raw
 
 
 class FrontendConfig(BaseModel):
@@ -236,6 +294,7 @@ class LoggingConfig(BaseModel):
 
 class SystemConfig(BaseModel):
     app: AppConfig
+    hamster: HamsterProfileConfig = Field(default_factory=HamsterProfileConfig)
     video: VideoConfig
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     motion_trigger: MotionTriggerConfig = Field(default_factory=MotionTriggerConfig)

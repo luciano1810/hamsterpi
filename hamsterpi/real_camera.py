@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
+import select
+import shutil
+import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -60,7 +64,7 @@ class RealCameraSettings:
     def from_config(cls, config: SystemConfig) -> "RealCameraSettings":
         video_cfg = config.video
         return cls(
-            device=str(video_cfg.real_camera_device or "auto").strip() or "auto",
+            device=str(video_cfg.real_camera_device or "rpicam").strip() or "rpicam",
             rotation=_normalize_rotation(video_cfg.real_camera_rotation),
             frame_width=max(1, int(video_cfg.frame_width)),
             frame_height=max(1, int(video_cfg.frame_height)),
@@ -182,6 +186,170 @@ class Picamera2Backend:
             except Exception:  # noqa: BLE001
                 pass
             self._camera = None
+
+
+class RPiCamMJPEGBackend:
+    def __init__(self, settings: RealCameraSettings, executable: str) -> None:
+        self._settings = settings
+        self._executable = executable
+        self._process: Optional[subprocess.Popen[bytes]] = None
+        self._buffer = bytearray()
+        self._read_timeout_seconds = 0.9
+        self.name = f"rpicam:{Path(executable).name}"
+
+    def open(self) -> None:
+        args = [
+            self._executable,
+            "--timeout",
+            "0",
+            "--nopreview",
+            "--codec",
+            "mjpeg",
+            "--width",
+            str(int(self._settings.frame_width)),
+            "--height",
+            str(int(self._settings.frame_height)),
+            "--framerate",
+            str(int(max(self._settings.capture_fps, 1))),
+            "-o",
+            "-",
+        ]
+        process = subprocess.Popen(
+            args,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=0,
+            close_fds=True,
+        )
+        if process.stdout is None or process.stderr is None:
+            process.terminate()
+            raise RuntimeError("failed to open rpicam stream pipe")
+
+        self._process = process
+        self._buffer = bytearray()
+        time.sleep(0.08)
+        self._drain_stderr()
+        if process.poll() is not None:
+            self.close()
+            raise RuntimeError("rpicam process exited during startup")
+
+    def _drain_stderr(self) -> str:
+        process = self._process
+        if process is None or process.stderr is None:
+            return ""
+
+        fd = process.stderr.fileno()
+        chunks: list[bytes] = []
+        for _ in range(4):
+            try:
+                ready, _, _ = select.select([fd], [], [], 0.0)
+            except (OSError, ValueError):
+                break
+            if not ready:
+                break
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            chunks.append(chunk)
+
+        if not chunks:
+            return ""
+        return b"".join(chunks).decode("utf-8", errors="replace").strip()
+
+    def _extract_jpeg(self) -> Optional[bytes]:
+        if not self._buffer:
+            return None
+
+        start = self._buffer.find(b"\xff\xd8")
+        if start < 0:
+            if len(self._buffer) > 2:
+                del self._buffer[:-2]
+            return None
+
+        if start > 0:
+            del self._buffer[:start]
+
+        end = self._buffer.find(b"\xff\xd9", 2)
+        if end < 0:
+            if len(self._buffer) > 6 * 1024 * 1024:
+                del self._buffer[:-2 * 1024 * 1024]
+            return None
+
+        payload = bytes(self._buffer[: end + 2])
+        del self._buffer[: end + 2]
+        return payload
+
+    def read(self) -> tuple[bool, Optional[np.ndarray]]:
+        process = self._process
+        if process is None or process.stdout is None:
+            return False, None
+        if process.poll() is not None:
+            return False, None
+
+        stdout_fd = process.stdout.fileno()
+        for _ in range(8):
+            payload = self._extract_jpeg()
+            if payload is not None:
+                frame = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
+                if frame is not None and frame.size > 0:
+                    return True, frame
+                continue
+
+            try:
+                ready, _, _ = select.select([stdout_fd], [], [], self._read_timeout_seconds)
+            except (OSError, ValueError):
+                return False, None
+            if not ready:
+                if process.poll() is not None:
+                    return False, None
+                self._drain_stderr()
+                continue
+
+            try:
+                chunk = os.read(stdout_fd, 65536)
+            except OSError:
+                return False, None
+            if not chunk:
+                break
+            self._buffer.extend(chunk)
+            self._drain_stderr()
+
+        return False, None
+
+    def close(self) -> None:
+        process = self._process
+        self._process = None
+        self._buffer = bytearray()
+        if process is None:
+            return
+
+        try:
+            process.terminate()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            process.wait(timeout=1.2)
+        except Exception:  # noqa: BLE001
+            try:
+                process.kill()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                process.wait(timeout=0.8)
+            except Exception:  # noqa: BLE001
+                pass
+
+        for stream in (process.stdout, process.stderr):
+            if stream is None:
+                continue
+            try:
+                stream.close()
+            except Exception:  # noqa: BLE001
+                continue
 
 
 class RealCameraLoopService:
@@ -871,10 +1039,35 @@ class RealCameraLoopService:
 
     def _open_backend(self) -> CameraBackend:
         settings = self._settings
-        device_raw = str(settings.device or "auto").strip()
+        device_raw = str(settings.device or "rpicam").strip()
         device_lc = device_raw.lower()
 
         open_errors: list[str] = []
+
+        def try_rpicam(preferred_binary: Optional[str] = None) -> Optional[CameraBackend]:
+            candidates: list[str] = []
+            if preferred_binary:
+                candidates.append(preferred_binary)
+            for name in ("rpicam-vid", "libcamera-vid"):
+                if name not in candidates:
+                    candidates.append(name)
+
+            for candidate in candidates:
+                executable = candidate
+                if "/" not in candidate:
+                    resolved = shutil.which(candidate)
+                    if not resolved:
+                        open_errors.append(f"{candidate}: executable not found")
+                        continue
+                    executable = resolved
+
+                backend = RPiCamMJPEGBackend(settings, executable=executable)
+                try:
+                    backend.open()
+                    return backend
+                except Exception as exc:  # noqa: BLE001
+                    open_errors.append(f"{Path(executable).name}: {exc}")
+            return None
 
         def try_picamera2() -> Optional[CameraBackend]:
             backend = Picamera2Backend(settings)
@@ -896,7 +1089,13 @@ class RealCameraLoopService:
                     continue
             return None
 
-        if device_lc in {"auto", "picamera2", "csi", "ov5647"}:
+        if device_lc in {"auto", "rpicam", "rpicam-vid", "libcamera", "libcamera-vid"}:
+            preferred_binary = None if device_lc == "auto" else device_raw
+            camera = try_rpicam(preferred_binary=preferred_binary)
+            if camera is not None:
+                return camera
+
+        if device_lc in {"auto", "picamera2", "csi", "ov5647", "rpicam", "rpicam-vid", "libcamera", "libcamera-vid"}:
             camera = try_picamera2()
             if camera is not None:
                 return camera
@@ -904,7 +1103,7 @@ class RealCameraLoopService:
         opencv_candidates: list[Union[int, str]] = []
         if device_lc == "auto":
             opencv_candidates = [0, "/dev/video0", "/dev/video1"]
-        elif device_lc in {"picamera2", "csi", "ov5647"}:
+        elif device_lc in {"picamera2", "csi", "ov5647", "rpicam", "rpicam-vid", "libcamera", "libcamera-vid"}:
             opencv_candidates = [0, "/dev/video0", "/dev/video1"]
         elif device_raw.isdigit():
             opencv_candidates = [int(device_raw)]
