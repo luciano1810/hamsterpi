@@ -18,7 +18,6 @@ video:
   fps: 10
   frame_width: 960
   frame_height: 540
-  simulate: true
   snapshot_interval_seconds: 300
   real_camera_device: rpicam
   real_camera_rotation: 0

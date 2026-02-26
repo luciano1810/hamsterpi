@@ -63,8 +63,27 @@ const I18N = {
     tab_overview: "总览",
     tab_stats: "数据统计",
     tab_live: "实时监控",
+    tab_history: "历史录像",
     tab_live_title: "实时监控（真实模式 / 演示回看）",
     tab_live_desc: "真实模式显示 CSI 摄像头流；演示模式可回放上传视频。",
+    history_title: "历史录像回放",
+    history_desc: "查看真实模式循环录制生成的历史片段，点击列表即可回放。",
+    history_btn_refresh: "刷新录像列表",
+    history_status_loading: "正在加载历史录像...",
+    history_status_empty: "暂无历史录像。请在真实模式开启循环录制后重试。",
+    history_status_load_fail: "历史录像加载失败：{error}",
+    history_status_select: "请选择左侧录像进行回放。",
+    history_status_playing: "正在回放：{name}",
+    history_status_ready: "已载入：{name}",
+    history_recording_tag: "录制中",
+    history_summary: "共 {count} 段，约 {size_mb} MB",
+    history_label_size: "文件大小",
+    history_label_modified: "更新时间",
+    history_label_duration: "时长",
+    history_label_fps: "录制 FPS",
+    history_label_frames: "帧数",
+    history_unknown: "-",
+    history_duration_unit: "秒",
     live_status_waiting_mode: "请切换到真实模式，或使用 demo + 上传视频回看。",
     live_status_waiting_upload: "请先上传并选择视频。",
     live_status_loading: "正在加载上传视频...",
@@ -398,8 +417,27 @@ const I18N = {
     tab_overview: "Overview",
     tab_stats: "Data Stats",
     tab_live: "Realtime Monitor",
+    tab_history: "Recordings",
     tab_live_title: "Realtime Monitor (Real / Demo Playback)",
     tab_live_desc: "Real mode shows CSI camera stream; demo mode plays uploaded video.",
+    history_title: "Recording Playback",
+    history_desc: "Browse loop-recorded segments from real mode and play them on demand.",
+    history_btn_refresh: "Refresh Recordings",
+    history_status_loading: "Loading recordings...",
+    history_status_empty: "No recordings found. Enable loop recording in real mode first.",
+    history_status_load_fail: "Failed to load recordings: {error}",
+    history_status_select: "Select a recording from the left list.",
+    history_status_playing: "Playing: {name}",
+    history_status_ready: "Loaded: {name}",
+    history_recording_tag: "Recording",
+    history_summary: "{count} segments, about {size_mb} MB",
+    history_label_size: "File Size",
+    history_label_modified: "Modified",
+    history_label_duration: "Duration",
+    history_label_fps: "FPS",
+    history_label_frames: "Frames",
+    history_unknown: "-",
+    history_duration_unit: "s",
     live_status_waiting_mode: "Switch to real mode, or use demo + uploaded_video playback.",
     live_status_waiting_upload: "Upload and select a video first.",
     live_status_loading: "Loading uploaded video...",
@@ -710,7 +748,7 @@ const I18N = {
 };
 
 const charts = {};
-const DASHBOARD_TABS = ["overview", "stats", "live"];
+const DASHBOARD_TABS = ["overview", "stats", "live", "history"];
 const THEME_STORAGE_KEY = "hamsterpi_theme";
 let autoRefresh = true;
 let refreshTimer = null;
@@ -736,6 +774,13 @@ let liveRealStreamLoaded = false;
 let liveRealStreamFailed = false;
 let realCameraMeta = null;
 let realInitPromptShown = false;
+let historyRecordings = [];
+let historySummary = null;
+let historySelectedKey = "";
+let historyLoadedKey = "";
+let historyLoading = false;
+let historyLoadError = "";
+let historyRequestSeq = 0;
 const CLIENT_VIDEO_COMPRESS = {
   maxWidth: 960,
   maxHeight: 540,
@@ -773,7 +818,7 @@ const SETTINGS_SECTIONS = [
   {
     id: "app",
     path: "app",
-    includeKeys: ["run_mode", "demo_source", "demo_analysis_resolution", "demo_analysis_fps"],
+    includeKeys: ["run_mode", "demo_source"],
     labelKey: "settings_section_app",
     descKey: "settings_section_app_desc",
   },
@@ -784,46 +829,43 @@ const SETTINGS_SECTIONS = [
     labelKey: "settings_section_hamster",
     descKey: "settings_section_hamster_desc",
   },
-  { id: "video", path: "video", labelKey: "settings_section_video", descKey: "settings_section_video_desc" },
-  { id: "runtime", path: "runtime", labelKey: "settings_section_runtime", descKey: "settings_section_runtime_desc" },
-  { id: "motion_trigger", path: "motion_trigger", labelKey: "settings_section_motion", descKey: "settings_section_motion_desc" },
-  { id: "environment", path: "environment", labelKey: "settings_section_environment", descKey: "settings_section_environment_desc" },
-  { id: "wheel", path: "wheel", labelKey: "settings_section_wheel", descKey: "settings_section_wheel_desc" },
   {
-    id: "health",
-    path: "health",
-    includeKeys: ["capture_interval_seconds", "baseline_body_area_px"],
-    labelKey: "settings_section_health",
-    descKey: "settings_section_health_desc",
+    id: "video",
+    path: "video",
+    includeKeys: [
+      "frame_size",
+      "real_camera_device",
+      "real_record_enabled",
+      "real_record_segment_seconds",
+      "real_record_output_dir",
+      "real_record_max_storage_gb",
+    ],
+    labelKey: "settings_section_video",
+    descKey: "settings_section_video_desc",
   },
-  { id: "health_vlm", path: "health.vlm", labelKey: "settings_section_vlm", descKey: "settings_section_vlm_desc" },
-  { id: "inventory", path: "inventory", labelKey: "settings_section_inventory", descKey: "settings_section_inventory_desc" },
   {
     id: "notifications",
     path: "alerts",
     includeKeys: [
-      "escape_enabled",
       "notifier_provider",
       "notifier_cooldown_seconds",
-      "mac_notifier_command",
-      "bark_server",
-      "bark_device_key",
-      "bark_group",
-      "bark_sound",
+      "max_stereotypy_index",
+      "max_weight_change_ratio",
     ],
     labelKey: "settings_section_notifications",
     descKey: "settings_section_notifications_desc",
   },
   {
-    id: "alerts",
-    path: "alerts",
-    includeKeys: ["max_stereotypy_index", "max_weight_change_ratio"],
-    labelKey: "settings_section_alerts",
-    descKey: "settings_section_alerts_desc",
+    id: "frontend",
+    path: "frontend",
+    includeKeys: ["refresh_interval_seconds", "default_language", "available_languages"],
+    labelKey: "settings_section_frontend",
+    descKey: "settings_section_frontend_desc",
   },
-  { id: "frontend", path: "frontend", labelKey: "settings_section_frontend", descKey: "settings_section_frontend_desc" },
   { id: "demo_tools", path: "", special: "demo_tools", labelKey: "settings_section_demo_tools", descKey: "settings_section_demo_tools_desc" },
 ];
+
+const VISIBLE_SETTINGS_SECTION_IDS = new Set(["app", "hamster", "video", "notifications", "frontend", "demo_tools"]);
 
 const SETTINGS_FIELD_LABELS = {
   "app.title": { "zh-CN": "控制台标题", "en-US": "Console Title" },
@@ -841,9 +883,9 @@ const SETTINGS_FIELD_LABELS = {
   "hamster.notes": { "zh-CN": "备注", "en-US": "Notes" },
   "video.source_path": { "zh-CN": "视频源路径", "en-US": "Video Source Path" },
   "video.fps": { "zh-CN": "输入帧率 (FPS)", "en-US": "Input FPS" },
+  "video.frame_size": { "zh-CN": "视频分辨率 (宽x高)", "en-US": "Video Resolution (WxH)" },
   "video.frame_width": { "zh-CN": "画面宽度 (px)", "en-US": "Frame Width (px)" },
   "video.frame_height": { "zh-CN": "画面高度 (px)", "en-US": "Frame Height (px)" },
-  "video.simulate": { "zh-CN": "启用模拟输入", "en-US": "Use Simulated Input" },
   "video.snapshot_interval_seconds": { "zh-CN": "快照间隔 (秒)", "en-US": "Snapshot Interval (s)" },
   "video.real_camera_device": { "zh-CN": "真实摄像头设备", "en-US": "Real Camera Device" },
   "video.real_camera_rotation": { "zh-CN": "真实摄像头旋转", "en-US": "Real Camera Rotation" },
@@ -942,6 +984,7 @@ const SETTINGS_FIELD_OPTIONS = {
     { value: "female", labelKey: "hamster_sex_female" },
   ],
   "video.fps": [5, 8, 10, 12, 15, 24, 30],
+  "video.frame_size": ["320x180", "480x270", "640x360", "854x480", "960x540", "1280x720", "1600x900", "1920x1080"],
   "video.frame_width": [320, 480, 640, 960, 1280, 1920],
   "video.frame_height": [180, 270, 360, 540, 720, 1080],
   "video.snapshot_interval_seconds": [60, 120, 300, 600, 900, 1800],
@@ -1094,6 +1137,17 @@ function ensureHamsterProfileDefaults(rawConfig) {
   return rawConfig;
 }
 
+function removeDeprecatedVideoSettings(rawConfig) {
+  if (!rawConfig || typeof rawConfig !== "object") {
+    return rawConfig;
+  }
+  const video = rawConfig.video;
+  if (video && typeof video === "object" && !Array.isArray(video)) {
+    delete video.simulate;
+  }
+  return rawConfig;
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -1210,8 +1264,13 @@ function setByPath(obj, path, value) {
   cursor[parts[parts.length - 1]] = value;
 }
 
+function getVisibleSettingsSections() {
+  return SETTINGS_SECTIONS.filter((item) => VISIBLE_SETTINGS_SECTION_IDS.has(item.id));
+}
+
 function getSettingsSectionDef(id = settingsActiveSectionId) {
-  return SETTINGS_SECTIONS.find((item) => item.id === id) || SETTINGS_SECTIONS[0];
+  const visible = getVisibleSettingsSections();
+  return visible.find((item) => item.id === id) || visible[0] || SETTINGS_SECTIONS[0];
 }
 
 function localizedMetaLabel(table) {
@@ -1229,6 +1288,34 @@ function settingsFieldLabel(path) {
   const key = `settings_field_${path.replaceAll(".", "_")}`;
   const fallback = humanizeKey(path.split(".").pop());
   return tOrDefault(key, fallback);
+}
+
+function getVideoFrameSizeValue(configObject = settingsWorkingConfig) {
+  const widthRaw = getByPath(configObject, "video.frame_width");
+  const heightRaw = getByPath(configObject, "video.frame_height");
+  const width = Number(widthRaw);
+  const height = Number(heightRaw);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return "";
+  }
+  return `${Math.round(width)}x${Math.round(height)}`;
+}
+
+function parseFrameSizeValue(value) {
+  const raw = String(value || "").trim().toLowerCase().replaceAll(" ", "");
+  const match = raw.match(/^(\d+)x(\d+)$/);
+  if (!match) {
+    throw new Error(currentLanguage === "zh-CN" ? "分辨率格式应为 宽x高（例如 960x540）" : "Resolution must be in WxH format (e.g. 960x540)");
+  }
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error(currentLanguage === "zh-CN" ? "分辨率数值无效" : "Invalid resolution values");
+  }
+  return {
+    width: Math.round(width),
+    height: Math.round(height),
+  };
 }
 
 function settingsFieldKind(path, value) {
@@ -1389,6 +1476,15 @@ function renderLanguageArrayField(value, label, pathText) {
 }
 
 function renderSettingsField(path, value) {
+  if (path === "video.frame_size") {
+    const currentValue = getVideoFrameSizeValue(settingsWorkingConfig);
+    const kind = "string";
+    const label = settingsFieldLabel(path);
+    const pathText = escapeHtml(path);
+    const options = settingsFieldOptions(path, kind, currentValue) || [];
+    return renderSettingsSelectField(currentValue, kind, label, pathText, options);
+  }
+
   const kind = settingsFieldKind(path, value);
   const label = settingsFieldLabel(path);
   const pathText = escapeHtml(path);
@@ -1473,7 +1569,8 @@ function renderSettingsSectionList() {
     return;
   }
 
-  list.innerHTML = SETTINGS_SECTIONS.map((item) => {
+  const sections = getVisibleSettingsSections();
+  list.innerHTML = sections.map((item) => {
     const active = item.id === settingsActiveSectionId ? "active" : "";
     return `<button type="button" class="settings-section-item ${active}" data-section-id="${item.id}">${t(item.labelKey)}</button>`;
   }).join("");
@@ -1514,7 +1611,7 @@ function renderSettingsSectionContent() {
 
   formNode.innerHTML = keys
     .map((key) => {
-      const value = sectionValue[key];
+      const value = key === "frame_size" ? getVideoFrameSizeValue(settingsWorkingConfig) : sectionValue[key];
       const path = def.path ? `${def.path}.${key}` : key;
       return renderSettingsField(path, value);
     })
@@ -1540,6 +1637,13 @@ function commitCurrentSectionEdits() {
       const path = node.getAttribute("data-setting-path");
       const kind = node.getAttribute("data-setting-kind");
       if (!path) {
+        return;
+      }
+
+      if (path === "video.frame_size") {
+        const parsed = parseFrameSizeValue(node.value);
+        setByPath(settingsWorkingConfig, "video.frame_width", parsed.width);
+        setByPath(settingsWorkingConfig, "video.frame_height", parsed.height);
         return;
       }
 
@@ -1590,6 +1694,10 @@ function switchSettingsSection(nextId) {
   if (nextId === settingsActiveSectionId) {
     return;
   }
+  const visible = getVisibleSettingsSections();
+  if (!visible.some((item) => item.id === nextId)) {
+    return;
+  }
   if (!commitCurrentSectionEdits()) {
     return;
   }
@@ -1632,6 +1740,7 @@ function applyStaticI18n() {
   renderUploadedVideoSelector();
   updateUploadBlockVisibility();
   renderLiveVideoPanel();
+  renderHistoryRecordingsPanel();
 }
 
 function updateModeSelectorsLabel() {
@@ -1883,6 +1992,250 @@ function renderLiveVideoPanel() {
     status.textContent = formatText("live_status_ready", { name: liveVideoDisplayName() });
   } else {
     status.textContent = t("live_status_loading");
+  }
+}
+
+function formatLocalDateTime(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return t("history_unknown");
+  }
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    return t("history_unknown");
+  }
+  return date.toLocaleString();
+}
+
+function historyDisplayName(item) {
+  return String(item?.display_name || item?.video_key || historySelectedKey || "");
+}
+
+function historyDurationText(durationSeconds) {
+  const seconds = Number(durationSeconds || 0);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return t("history_unknown");
+  }
+  const digits = seconds >= 10 ? 0 : 1;
+  return `${seconds.toFixed(digits)} ${t("history_duration_unit")}`;
+}
+
+function historySelectedItem() {
+  if (!historySelectedKey) {
+    return null;
+  }
+  return historyRecordings.find((item) => String(item?.video_key || "") === historySelectedKey) || null;
+}
+
+function clearHistoryRecordingVideo(video) {
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+}
+
+function loadHistoryRecordingVideo(videoKey) {
+  const video = document.getElementById("history-recording-video");
+  if (!video) {
+    return;
+  }
+  if (!videoKey) {
+    if (historyLoadedKey) {
+      clearHistoryRecordingVideo(video);
+    }
+    historyLoadedKey = "";
+    return;
+  }
+  if (historyLoadedKey === videoKey) {
+    return;
+  }
+  historyLoadedKey = videoKey;
+  video.pause();
+  video.src = `/api/real/recording-video?video_key=${encodeURIComponent(videoKey)}&ts=${Date.now()}`;
+  video.load();
+}
+
+function buildHistoryMetaChip(labelKey, value) {
+  return `
+    <div class="history-meta-chip">
+      <p class="history-meta-label">${escapeHtml(t(labelKey))}</p>
+      <p class="history-meta-value">${escapeHtml(value || t("history_unknown"))}</p>
+    </div>
+  `;
+}
+
+function renderHistoryRecordingsPanel() {
+  const listNode = document.getElementById("history-recordings-list");
+  const summaryNode = document.getElementById("history-recordings-summary");
+  const statusNode = document.getElementById("history-recordings-status");
+  const metaNode = document.getElementById("history-recording-meta");
+  const video = document.getElementById("history-recording-video");
+  if (!listNode || !summaryNode || !statusNode || !metaNode) {
+    return;
+  }
+
+  if (historyRecordings.length > 0) {
+    const totalCount = Number(historySummary?.stored_files || historyRecordings.length);
+    const totalBytes = Number(historySummary?.stored_bytes || 0);
+    summaryNode.textContent = formatText("history_summary", {
+      count: Number.isFinite(totalCount) ? totalCount : historyRecordings.length,
+      size_mb: formatMb(totalBytes),
+    });
+  } else {
+    summaryNode.textContent = "";
+  }
+
+  if (historySelectedKey && !historyRecordings.some((item) => String(item?.video_key || "") === historySelectedKey)) {
+    historySelectedKey = String(historyRecordings[0]?.video_key || "");
+    historyLoadedKey = "";
+  }
+
+  if (historyRecordings.length === 0) {
+    listNode.innerHTML = `<p class="history-record-meta">${escapeHtml(t("history_status_empty"))}</p>`;
+    metaNode.innerHTML = "";
+  } else {
+    listNode.innerHTML = historyRecordings
+      .map((item) => {
+        const key = String(item?.video_key || "");
+        const isActive = key === historySelectedKey;
+        const recordTag = item?.is_recording ? `<span class="history-record-tag">${escapeHtml(t("history_recording_tag"))}</span>` : "";
+        const line = [
+          Number(item?.size_bytes) > 0 ? `${formatMb(item.size_bytes)}MB` : t("history_unknown"),
+          formatLocalDateTime(item?.modified_at),
+          historyDurationText(item?.duration_s),
+        ].join(" · ");
+        return `
+          <button
+            type="button"
+            class="history-record-item ${isActive ? "active" : ""}"
+            data-history-key="${escapeHtml(key)}"
+          >
+            <p class="history-record-name">${escapeHtml(historyDisplayName(item))}</p>
+            <p class="history-record-meta">${escapeHtml(line)}</p>
+            ${recordTag}
+          </button>
+        `;
+      })
+      .join("");
+
+    const selected = historySelectedItem();
+    if (selected) {
+      metaNode.innerHTML = [
+        buildHistoryMetaChip("history_label_size", Number(selected.size_bytes) > 0 ? `${formatMb(selected.size_bytes)}MB` : t("history_unknown")),
+        buildHistoryMetaChip("history_label_modified", formatLocalDateTime(selected.modified_at)),
+        buildHistoryMetaChip("history_label_duration", historyDurationText(selected.duration_s)),
+        buildHistoryMetaChip("history_label_fps", Number(selected.record_fps) > 0 ? String(selected.record_fps) : t("history_unknown")),
+        buildHistoryMetaChip("history_label_frames", Number(selected.written_frames) > 0 ? String(selected.written_frames) : t("history_unknown")),
+      ].join("");
+    } else {
+      metaNode.innerHTML = "";
+    }
+  }
+
+  if (historyLoading) {
+    statusNode.textContent = t("history_status_loading");
+    return;
+  }
+  if (historyLoadError) {
+    statusNode.textContent = formatText("history_status_load_fail", { error: historyLoadError });
+    return;
+  }
+  if (historyRecordings.length === 0) {
+    statusNode.textContent = t("history_status_empty");
+    return;
+  }
+
+  const selected = historySelectedItem();
+  const selectedName = historyDisplayName(selected);
+  if (!selected || !historySelectedKey) {
+    statusNode.textContent = t("history_status_select");
+    return;
+  }
+  if (video?.error) {
+    const code = Number(video.error?.code || 0);
+    const errorCode = code > 0 ? `MEDIA_ERR_${code}` : "unknown";
+    statusNode.textContent = formatText("history_status_load_fail", { error: errorCode });
+    return;
+  }
+  if (historyLoadedKey === historySelectedKey) {
+    if (video?.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      statusNode.textContent = (!video.paused && !video.ended)
+        ? formatText("history_status_playing", { name: selectedName })
+        : formatText("history_status_ready", { name: selectedName });
+      return;
+    }
+    statusNode.textContent = t("history_status_loading");
+    return;
+  }
+  statusNode.textContent = t("history_status_select");
+}
+
+function selectHistoryRecording(videoKey) {
+  const nextKey = String(videoKey || "");
+  if (!nextKey) {
+    return;
+  }
+  historySelectedKey = nextKey;
+  loadHistoryRecordingVideo(nextKey);
+  renderHistoryRecordingsPanel();
+}
+
+async function loadHistoryRecordings(force = false) {
+  if (!force && historyLoading) {
+    return;
+  }
+
+  const requestSeq = historyRequestSeq + 1;
+  historyRequestSeq = requestSeq;
+  historyLoading = true;
+  historyLoadError = "";
+  renderHistoryRecordingsPanel();
+
+  try {
+    const response = await fetch("/api/real/recordings?limit=240", { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(await responseDetailText(response));
+    }
+    const payload = await response.json();
+    if (requestSeq !== historyRequestSeq) {
+      return;
+    }
+
+    historySummary = payload;
+    historyRecordings = Array.isArray(payload.items) ? payload.items : [];
+
+    if (!historySelectedKey || !historyRecordings.some((item) => String(item?.video_key || "") === historySelectedKey)) {
+      historySelectedKey = String(historyRecordings[0]?.video_key || "");
+      historyLoadedKey = "";
+    }
+
+    if (historySelectedKey) {
+      loadHistoryRecordingVideo(historySelectedKey);
+    } else {
+      const video = document.getElementById("history-recording-video");
+      if (video && historyLoadedKey) {
+        clearHistoryRecordingVideo(video);
+      }
+      historyLoadedKey = "";
+    }
+  } catch (err) {
+    if (requestSeq !== historyRequestSeq) {
+      return;
+    }
+    historyLoadError = String(err);
+    if (historyRecordings.length === 0) {
+      historySummary = null;
+      historyLoadedKey = "";
+      historySelectedKey = "";
+      const video = document.getElementById("history-recording-video");
+      if (video) {
+        clearHistoryRecordingVideo(video);
+      }
+    }
+  } finally {
+    if (requestSeq === historyRequestSeq) {
+      historyLoading = false;
+      renderHistoryRecordingsPanel();
+    }
   }
 }
 
@@ -2188,6 +2541,11 @@ function setDashboardTab(nextTab) {
   });
 
   renderLiveVideoPanel();
+  renderHistoryRecordingsPanel();
+
+  if (normalized === "history") {
+    void loadHistoryRecordings(true);
+  }
 
   if (normalized !== "stats") {
     return;
@@ -3134,6 +3492,7 @@ function renderGeneratedAt(data) {
 function renderDashboard(data) {
   renderGeneratedAt(data);
   renderLiveVideoPanel();
+  renderHistoryRecordingsPanel();
   void maybePromptRealZoneInitialization();
   renderKpis(data.summary);
   renderFeaturedPhoto(data);
@@ -3175,6 +3534,9 @@ async function loadDashboard(forceRefresh = false) {
   const data = await response.json();
   lastDashboardData = data;
   renderDashboard(data);
+  if (activeDashboardTab === "history") {
+    void loadHistoryRecordings(false);
+  }
 }
 
 function eventToCanvasPoint(event) {
@@ -3908,6 +4270,10 @@ async function loadDemoStatus() {
     renderUploadedVideoSelector();
     updateUploadBlockVisibility();
     renderLiveVideoPanel();
+    renderHistoryRecordingsPanel();
+    if (activeDashboardTab === "history") {
+      void loadHistoryRecordings(false);
+    }
   } catch (_err) {
     // Ignore transient status errors in UI.
   }
@@ -4694,6 +5060,7 @@ async function loadSettingsConfig() {
     const payload = await response.json();
     const raw = payload.config || {};
     ensureHamsterProfileDefaults(raw);
+    removeDeprecatedVideoSettings(raw);
 
     settingsRawConfig = deepClone(raw);
     settingsWorkingConfig = deepClone(raw);
@@ -4704,8 +5071,9 @@ async function loadSettingsConfig() {
     }
 
     syncModeFromRaw(raw);
-    if (!SETTINGS_SECTIONS.some((item) => item.id === settingsActiveSectionId)) {
-      settingsActiveSectionId = SETTINGS_SECTIONS[0].id;
+    const visibleSections = getVisibleSettingsSections();
+    if (!visibleSections.some((item) => item.id === settingsActiveSectionId)) {
+      settingsActiveSectionId = visibleSections[0]?.id || SETTINGS_SECTIONS[0].id;
     }
     renderSettingsSectionList();
     renderSettingsSectionContent();
@@ -4729,6 +5097,7 @@ async function saveSettingsConfig() {
 
   const raw = deepClone(settingsWorkingConfig);
   ensureHamsterProfileDefaults(raw);
+  removeDeprecatedVideoSettings(raw);
 
   const response = await fetch("/api/config/raw", {
     method: "POST",
@@ -4809,6 +5178,47 @@ function bindEvents() {
     });
   }
 
+  const historyRefreshBtn = document.getElementById("history-refresh-btn");
+  if (historyRefreshBtn) {
+    historyRefreshBtn.addEventListener("click", () => {
+      void loadHistoryRecordings(true);
+    });
+  }
+
+  const historyList = document.getElementById("history-recordings-list");
+  if (historyList) {
+    historyList.addEventListener("click", (event) => {
+      const origin = event.target;
+      if (!(origin instanceof Element)) {
+        return;
+      }
+      const button = origin.closest("[data-history-key]");
+      if (!button) {
+        return;
+      }
+      selectHistoryRecording(button.getAttribute("data-history-key"));
+    });
+  }
+
+  const historyVideo = document.getElementById("history-recording-video");
+  if (historyVideo) {
+    historyVideo.addEventListener("loadeddata", () => {
+      renderHistoryRecordingsPanel();
+    });
+    historyVideo.addEventListener("play", () => {
+      renderHistoryRecordingsPanel();
+    });
+    historyVideo.addEventListener("pause", () => {
+      renderHistoryRecordingsPanel();
+    });
+    historyVideo.addEventListener("ended", () => {
+      renderHistoryRecordingsPanel();
+    });
+    historyVideo.addEventListener("error", () => {
+      renderHistoryRecordingsPanel();
+    });
+  }
+
   refreshBtn.addEventListener("click", async () => {
     refreshBtn.disabled = true;
     refreshBtn.textContent = t("btn_refreshing");
@@ -4879,6 +5289,10 @@ function bindEvents() {
       updateUploadBlockVisibility();
       updateInitMappingVisibility();
       renderLiveVideoPanel();
+      renderHistoryRecordingsPanel();
+      if (activeDashboardTab === "history") {
+        void loadHistoryRecordings(true);
+      }
       if (currentRunMode === "real") {
         document.getElementById("settings-status").textContent = t("mode_real_connecting");
       }
@@ -4890,6 +5304,7 @@ function bindEvents() {
       currentDemoSource = event.target.value;
       updateUploadBlockVisibility();
       renderLiveVideoPanel();
+      renderHistoryRecordingsPanel();
     });
   }
 

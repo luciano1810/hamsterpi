@@ -91,7 +91,6 @@ class VideoConfig(BaseModel):
     fps: int = Field(default=30, ge=1)
     frame_width: int = Field(default=1280, ge=1)
     frame_height: int = Field(default=720, ge=1)
-    simulate: bool = True
     snapshot_interval_seconds: int = Field(default=300, ge=1)
     real_camera_device: str = "rpicam"
     real_camera_rotation: int = Field(default=0)

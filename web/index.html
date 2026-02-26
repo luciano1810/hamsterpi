@@ -76,6 +76,18 @@
         >
           实时监控
         </button>
+        <button
+          id="tab-history"
+          class="view-tab"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="tab-panel-history"
+          data-tab-target="history"
+          data-i18n="tab_history"
+        >
+          历史录像
+        </button>
       </nav>
 
       <section id="tab-panel-overview" class="tab-panel active" data-tab-panel="overview" role="tabpanel" aria-labelledby="tab-overview">
@@ -281,6 +293,27 @@
           </div>
         </article>
       </section>
+
+      <section id="tab-panel-history" class="tab-panel" data-tab-panel="history" role="tabpanel" aria-labelledby="tab-history">
+        <article class="panel panel-live">
+          <div class="panel-head">
+            <h2 data-i18n="history_title">历史录像</h2>
+            <p data-i18n="history_desc">查看真实模式循环录制生成的历史片段，点击列表即可回放。</p>
+          </div>
+          <div class="history-toolbar">
+            <p id="history-recordings-summary" class="live-status"></p>
+            <button id="history-refresh-btn" class="btn btn-ghost btn-xs" data-i18n="history_btn_refresh">刷新录像列表</button>
+          </div>
+          <div class="history-layout">
+            <div id="history-recordings-list" class="history-recordings-list"></div>
+            <div class="history-player-wrap">
+              <video id="history-recording-video" class="live-player history-player" controls playsinline preload="metadata"></video>
+              <div id="history-recording-meta" class="history-recording-meta"></div>
+            </div>
+          </div>
+          <p id="history-recordings-status" class="live-status">暂无录像。</p>
+        </article>
+      </section>
     </main>
 
     <div id="init-modal" class="modal hidden">
@@ -391,6 +424,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-    <script src="/web/app.js?v=20260220r1" type="module"></script>
+    <script src="/web/app.js?v=20260226r1" type="module"></script>
   </body>
 </html>

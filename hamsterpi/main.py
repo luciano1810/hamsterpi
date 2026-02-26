@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import time
 from collections import defaultdict
 from copy import deepcopy
@@ -120,6 +121,14 @@ class RawConfigPayload(BaseModel):
 
 def _resolve_upload_dir(config: SystemConfig) -> Path:
     path = Path(config.app.demo_upload_dir)
+    if path.is_absolute():
+        return path
+    return BASE_DIR / path
+
+
+def _resolve_real_record_dir(config: SystemConfig) -> Path:
+    raw = str(config.video.real_record_output_dir or "./captures/real_loop").strip() or "./captures/real_loop"
+    path = Path(raw)
     if path.is_absolute():
         return path
     return BASE_DIR / path
@@ -316,6 +325,98 @@ def _list_uploaded_videos(config: SystemConfig, active_video_path: Optional[Path
     for item in entries:
         item.pop("_mtime", None)
     return entries
+
+
+def _read_recording_meta(meta_path: Path) -> Dict[str, Any]:
+    if not meta_path.exists() or not meta_path.is_file():
+        return {}
+    try:
+        with meta_path.open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _recording_duration_seconds(meta: Dict[str, Any]) -> float:
+    try:
+        duration = float(meta.get("timeline_elapsed_s", 0.0))
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration > 0.0:
+        return duration
+
+    first_at = str(meta.get("first_frame_at", "")).strip()
+    last_at = str(meta.get("last_frame_at", "")).strip()
+    if not first_at or not last_at:
+        return 0.0
+    try:
+        return max(0.0, (datetime.fromisoformat(last_at) - datetime.fromisoformat(first_at)).total_seconds())
+    except ValueError:
+        return 0.0
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _list_real_recordings(
+    config: SystemConfig,
+    active_record_path: Optional[Path],
+    limit: int = 200,
+) -> List[Dict[str, Any]]:
+    record_dir = _resolve_real_record_dir(config)
+    if not record_dir.exists() or not record_dir.is_dir():
+        return []
+
+    active_resolved: Optional[Path] = None
+    if active_record_path is not None:
+        try:
+            active_resolved = active_record_path.resolve()
+        except OSError:
+            active_resolved = active_record_path
+
+    entries: List[Dict[str, Any]] = []
+    for path in record_dir.glob("loop_*.mp4"):
+        if not path.is_file():
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+
+        try:
+            path_resolved = path.resolve()
+        except OSError:
+            path_resolved = path
+
+        meta = _read_recording_meta(Path(f"{path.as_posix()}.meta.json"))
+        entries.append(
+            {
+                "video_key": path.name,
+                "display_name": path.name,
+                "path": str(path),
+                "size_bytes": int(stat.st_size),
+                "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "opened_at": str(meta.get("opened_at", "")),
+                "closed_at": str(meta.get("closed_at", "")),
+                "duration_s": round(_recording_duration_seconds(meta), 3),
+                "record_fps": _safe_int(meta.get("record_fps", 0), default=0),
+                "written_frames": _safe_int(meta.get("written_frames", 0), default=0),
+                "frame_time_matched": bool(meta.get("frame_time_matched", False)),
+                "is_recording": bool(active_resolved is not None and path_resolved == active_resolved),
+                "_mtime": float(stat.st_mtime),
+            }
+        )
+
+    entries.sort(key=lambda item: (item.get("_mtime", 0.0), item.get("video_key", "")), reverse=True)
+    for item in entries:
+        item.pop("_mtime", None)
+
+    return entries[: max(1, int(limit))]
 
 
 def _empty_dashboard_payload(config: SystemConfig, source: str, status_message: str) -> Dict[str, Any]:
@@ -1998,6 +2099,65 @@ def real_camera_status() -> Dict[str, Any]:
             snapshot = dashboard_state.real_camera.snapshot()
         snapshot["zone_required"] = bool(dashboard_state.real_zone_required)
         return snapshot
+
+
+@app.get("/api/real/recordings")
+def real_recordings(limit: int = Query(default=240, ge=1, le=1000)) -> Dict[str, Any]:
+    with dashboard_state.lock:
+        cfg = dashboard_state.config
+        snapshot = dashboard_state.real_camera.snapshot()
+        record_dir = _resolve_real_record_dir(cfg)
+        current_record_raw = str(snapshot.get("current_record_path", "") or "")
+        current_record_path = Path(current_record_raw) if current_record_raw else None
+        items = _list_real_recordings(
+            cfg,
+            active_record_path=current_record_path,
+            limit=limit,
+        )
+
+        fallback_stored_bytes = int(sum(_safe_int(item.get("size_bytes"), default=0) for item in items))
+        return {
+            "run_mode": cfg.app.run_mode,
+            "recording_enabled": bool(snapshot.get("recording_enabled", cfg.video.real_record_enabled)),
+            "recording_active": bool(snapshot.get("recording_active", False)),
+            "current_record_path": current_record_raw,
+            "record_output_dir": str(record_dir),
+            "stored_files": _safe_int(snapshot.get("stored_files"), default=len(items)),
+            "stored_bytes": _safe_int(snapshot.get("stored_bytes"), default=fallback_stored_bytes),
+            "items": items,
+        }
+
+
+@app.get("/api/real/recording-video")
+def real_recording_video(video_key: str = Query(..., min_length=1, max_length=255)) -> FileResponse:
+    with dashboard_state.lock:
+        cfg = dashboard_state.config
+        safe_key = Path(video_key).name
+        if safe_key != video_key:
+            raise HTTPException(status_code=400, detail="Invalid recording key")
+        if not safe_key.startswith("loop_"):
+            raise HTTPException(status_code=400, detail="Invalid recording key")
+
+        record_dir = _resolve_real_record_dir(cfg)
+        target = record_dir / safe_key
+        if not target.exists() or not target.is_file():
+            raise HTTPException(status_code=404, detail="Recording not found")
+        if target.suffix.lower() not in ALLOWED_VIDEO_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"Unsupported file extension: {target.suffix.lower()}")
+
+        try:
+            record_root = record_dir.resolve()
+            resolved_target = target.resolve()
+        except OSError as exc:
+            raise HTTPException(status_code=404, detail="Recording not found") from exc
+        if record_root not in resolved_target.parents and resolved_target != record_root:
+            raise HTTPException(status_code=400, detail="Invalid recording path")
+
+        return FileResponse(
+            path=resolved_target,
+            media_type=_video_media_type(resolved_target),
+            filename=resolved_target.name,
+        )
 
 
 @app.get("/api/real/live-stream")
