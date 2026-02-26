@@ -82,6 +82,9 @@ const I18N = {
     history_label_duration: "时长",
     history_label_fps: "录制 FPS",
     history_label_frames: "帧数",
+    history_label_change_at: "变化时刻",
+    history_preview_empty: "暂无变化预览",
+    history_preview_alt: "变化画面预览",
     history_unknown: "-",
     history_duration_unit: "秒",
     live_status_waiting_mode: "请切换到真实模式，或使用 demo + 上传视频回看。",
@@ -203,7 +206,7 @@ const I18N = {
     settings_section_frontend: "前端展示",
     settings_section_logging: "日志系统",
     settings_section_demo_tools: "演示工具",
-    settings_section_app_desc: "运行模式、演示数据来源与分析压缩参数等应用基础设置。",
+    settings_section_app_desc: "运行模式、演示参数与前端展示（刷新周期/语言/历史窗口）设置。",
     settings_section_hamster_desc: "仓鼠基础档案设置，包括昵称、年龄、品种、性别等。",
     settings_section_video_desc: "视频源路径与输入帧率、分辨率设置。",
     settings_section_runtime_desc: "低内存模式、分析分辨率和帧处理节流。",
@@ -436,6 +439,9 @@ const I18N = {
     history_label_duration: "Duration",
     history_label_fps: "FPS",
     history_label_frames: "Frames",
+    history_label_change_at: "Change At",
+    history_preview_empty: "No change preview",
+    history_preview_alt: "Change preview frame",
     history_unknown: "-",
     history_duration_unit: "s",
     live_status_waiting_mode: "Switch to real mode, or use demo + uploaded_video playback.",
@@ -557,7 +563,7 @@ const I18N = {
     settings_section_frontend: "Frontend",
     settings_section_logging: "Logging",
     settings_section_demo_tools: "Demo Tools",
-    settings_section_app_desc: "Run mode, demo source and analysis compression settings.",
+    settings_section_app_desc: "Run mode, demo settings, and frontend display settings (refresh/language/history).",
     settings_section_hamster_desc: "Basic hamster profile fields such as name, age, breed and sex.",
     settings_section_video_desc: "Video source path, fps and frame dimensions.",
     settings_section_runtime_desc: "Low-memory profile and frame processing throttling.",
@@ -781,6 +787,8 @@ let historyLoadedKey = "";
 let historyLoading = false;
 let historyLoadError = "";
 let historyRequestSeq = 0;
+let historyTimelineDragging = false;
+let historyPendingSeekSeconds = null;
 const CLIENT_VIDEO_COMPRESS = {
   maxWidth: 960,
   maxHeight: 540,
@@ -818,7 +826,15 @@ const SETTINGS_SECTIONS = [
   {
     id: "app",
     path: "app",
-    includeKeys: ["run_mode", "demo_source"],
+    fields: [
+      "app.run_mode",
+      "app.demo_source",
+      "app.demo_analysis_resolution",
+      "app.demo_analysis_fps",
+      "frontend.refresh_interval_seconds",
+      "frontend.history_minutes",
+      "frontend.default_language",
+    ],
     labelKey: "settings_section_app",
     descKey: "settings_section_app_desc",
   },
@@ -837,7 +853,6 @@ const SETTINGS_SECTIONS = [
       "real_camera_device",
       "real_record_enabled",
       "real_record_segment_seconds",
-      "real_record_output_dir",
       "real_record_max_storage_gb",
     ],
     labelKey: "settings_section_video",
@@ -849,6 +864,11 @@ const SETTINGS_SECTIONS = [
     includeKeys: [
       "notifier_provider",
       "notifier_cooldown_seconds",
+      "mac_notifier_command",
+      "bark_server",
+      "bark_device_key",
+      "bark_group",
+      "bark_sound",
       "max_stereotypy_index",
       "max_weight_change_ratio",
     ],
@@ -856,16 +876,16 @@ const SETTINGS_SECTIONS = [
     descKey: "settings_section_notifications_desc",
   },
   {
-    id: "frontend",
-    path: "frontend",
-    includeKeys: ["refresh_interval_seconds", "default_language", "available_languages"],
-    labelKey: "settings_section_frontend",
-    descKey: "settings_section_frontend_desc",
+    id: "vlm",
+    path: "health.vlm",
+    includeKeys: ["enabled", "provider", "endpoint", "model", "api_key_env", "timeout_seconds"],
+    labelKey: "settings_section_vlm",
+    descKey: "settings_section_vlm_desc",
   },
   { id: "demo_tools", path: "", special: "demo_tools", labelKey: "settings_section_demo_tools", descKey: "settings_section_demo_tools_desc" },
 ];
 
-const VISIBLE_SETTINGS_SECTION_IDS = new Set(["app", "hamster", "video", "notifications", "frontend", "demo_tools"]);
+const VISIBLE_SETTINGS_SECTION_IDS = new Set(["app", "hamster", "video", "notifications", "vlm", "demo_tools"]);
 
 const SETTINGS_FIELD_LABELS = {
   "app.title": { "zh-CN": "控制台标题", "en-US": "Console Title" },
@@ -1273,6 +1293,52 @@ function getSettingsSectionDef(id = settingsActiveSectionId) {
   return visible.find((item) => item.id === id) || visible[0] || SETTINGS_SECTIONS[0];
 }
 
+function shouldHideSettingsField(path, rawConfig = settingsWorkingConfig) {
+  if (!path) {
+    return false;
+  }
+
+  if (path === "frontend.available_languages") {
+    return true;
+  }
+  if (path === "video.real_record_output_dir") {
+    return true;
+  }
+  if (path === "app.demo_source") {
+    return String(getByPath(rawConfig, "app.run_mode") || "").toLowerCase() === "real";
+  }
+
+  const notifierProvider = String(getByPath(rawConfig, "alerts.notifier_provider") || "").toLowerCase();
+  if (path === "alerts.mac_notifier_command") {
+    return notifierProvider !== "mac";
+  }
+  if (["alerts.bark_server", "alerts.bark_device_key", "alerts.bark_group", "alerts.bark_sound"].includes(path)) {
+    return notifierProvider !== "bark";
+  }
+
+  return false;
+}
+
+function getSettingsSectionFieldPaths(def, rawConfig = settingsWorkingConfig) {
+  if (!def) {
+    return [];
+  }
+
+  if (Array.isArray(def.fields) && def.fields.length > 0) {
+    return def.fields.filter((path) => !shouldHideSettingsField(path, rawConfig));
+  }
+
+  const sectionValue = getByPath(rawConfig, def.path);
+  if (!sectionValue || typeof sectionValue !== "object" || Array.isArray(sectionValue)) {
+    return [];
+  }
+
+  const keys = Array.isArray(def.includeKeys) ? def.includeKeys : Object.keys(sectionValue);
+  return keys
+    .map((key) => (def.path ? `${def.path}.${key}` : key))
+    .filter((path) => !shouldHideSettingsField(path, rawConfig));
+}
+
 function localizedMetaLabel(table) {
   if (!table || typeof table !== "object" || Array.isArray(table)) {
     return "";
@@ -1595,24 +1661,16 @@ function renderSettingsSectionContent() {
     return;
   }
 
-  const sectionValue = getByPath(settingsWorkingConfig, def.path);
-  if (!sectionValue || typeof sectionValue !== "object" || Array.isArray(sectionValue)) {
+  const fieldPaths = getSettingsSectionFieldPaths(def, settingsWorkingConfig);
+  if (fieldPaths.length === 0) {
     formNode.innerHTML = `<div class="settings-form-empty">${t("settings_form_empty")}</div>`;
     updateUploadBlockVisibility();
     return;
   }
 
-  const keys = Array.isArray(def.includeKeys) ? def.includeKeys : Object.keys(sectionValue);
-  if (keys.length === 0) {
-    formNode.innerHTML = `<div class="settings-form-empty">${t("settings_form_empty")}</div>`;
-    updateUploadBlockVisibility();
-    return;
-  }
-
-  formNode.innerHTML = keys
-    .map((key) => {
-      const value = key === "frame_size" ? getVideoFrameSizeValue(settingsWorkingConfig) : sectionValue[key];
-      const path = def.path ? `${def.path}.${key}` : key;
+  formNode.innerHTML = fieldPaths
+    .map((path) => {
+      const value = path === "video.frame_size" ? getVideoFrameSizeValue(settingsWorkingConfig) : getByPath(settingsWorkingConfig, path);
       return renderSettingsField(path, value);
     })
     .join("");
@@ -2007,6 +2065,70 @@ function formatLocalDateTime(value) {
   return date.toLocaleString();
 }
 
+function formatDurationClock(seconds) {
+  const safe = Math.max(0, Number(seconds || 0));
+  if (!Number.isFinite(safe)) {
+    return "00:00";
+  }
+  const total = Math.floor(safe);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) {
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function syncHistoryTimelineControls() {
+  const slider = document.getElementById("history-timeline-slider");
+  const currentNode = document.getElementById("history-current-time");
+  const totalNode = document.getElementById("history-total-time");
+  const video = document.getElementById("history-recording-video");
+  if (!slider || !currentNode || !totalNode || !video) {
+    return;
+  }
+
+  const hasSelection = Boolean(historySelectedKey);
+  const durationRaw = Number(video.duration || 0);
+  const hasDuration = Number.isFinite(durationRaw) && durationRaw > 0;
+  const duration = hasDuration ? durationRaw : 0;
+  const current = Math.max(0, Number(video.currentTime || 0));
+
+  slider.disabled = !(hasSelection && hasDuration);
+  slider.min = "0";
+  slider.max = hasDuration ? String(duration) : "0";
+  slider.step = "0.1";
+  if (!historyTimelineDragging) {
+    slider.value = hasDuration ? String(Math.min(current, duration)) : "0";
+  }
+
+  currentNode.textContent = formatDurationClock(current);
+  totalNode.textContent = formatDurationClock(duration);
+}
+
+function applyHistoryPendingSeek(video) {
+  if (!video) {
+    return;
+  }
+  const pending = Number(historyPendingSeekSeconds);
+  if (!Number.isFinite(pending) || pending < 0) {
+    historyPendingSeekSeconds = null;
+    return;
+  }
+  const duration = Number(video.duration || 0);
+  if (!Number.isFinite(duration) || duration <= 0) {
+    return;
+  }
+  const target = Math.max(0, Math.min(pending, Math.max(0, duration - 0.05)));
+  historyPendingSeekSeconds = null;
+  try {
+    video.currentTime = target;
+  } catch (_err) {
+    // ignore invalid seek
+  }
+}
+
 function historyDisplayName(item) {
   return String(item?.display_name || item?.video_key || historySelectedKey || "");
 }
@@ -2031,6 +2153,7 @@ function clearHistoryRecordingVideo(video) {
   video.pause();
   video.removeAttribute("src");
   video.load();
+  syncHistoryTimelineControls();
 }
 
 function loadHistoryRecordingVideo(videoKey) {
@@ -2098,19 +2221,39 @@ function renderHistoryRecordingsPanel() {
         const key = String(item?.video_key || "");
         const isActive = key === historySelectedKey;
         const recordTag = item?.is_recording ? `<span class="history-record-tag">${escapeHtml(t("history_recording_tag"))}</span>` : "";
+        const previewTs = encodeURIComponent(String(item?.change_preview_updated_at || item?.modified_at || ""));
+        const previewSrc = `/api/real/recording-preview?video_key=${encodeURIComponent(key)}&ts=${previewTs}`;
+        const changeSeconds = Number(item?.change_preview_time_s || 0);
+        const hasPreview = Boolean(item?.change_preview_available);
+        const changeText = hasPreview && Number.isFinite(changeSeconds) && changeSeconds >= 0
+          ? `${t("history_label_change_at")} ${formatDurationClock(changeSeconds)}`
+          : `${t("history_label_change_at")} ${t("history_unknown")}`;
         const line = [
           Number(item?.size_bytes) > 0 ? `${formatMb(item.size_bytes)}MB` : t("history_unknown"),
           formatLocalDateTime(item?.modified_at),
           historyDurationText(item?.duration_s),
         ].join(" · ");
+        const previewHtml = hasPreview
+          ? `<img
+              class="history-record-preview"
+              loading="lazy"
+              alt="${escapeHtml(t("history_preview_alt"))}"
+              src="${previewSrc}"
+              data-history-jump-seconds="${escapeHtml(String(changeSeconds))}"
+            />`
+          : `<div class="history-record-preview-empty">${escapeHtml(t("history_preview_empty"))}</div>`;
         return `
           <button
             type="button"
             class="history-record-item ${isActive ? "active" : ""}"
             data-history-key="${escapeHtml(key)}"
           >
+            <div class="history-record-preview-wrap">
+              ${previewHtml}
+            </div>
             <p class="history-record-name">${escapeHtml(historyDisplayName(item))}</p>
             <p class="history-record-meta">${escapeHtml(line)}</p>
+            <p class="history-record-change">${escapeHtml(changeText)}</p>
             ${recordTag}
           </button>
         `;
@@ -2123,6 +2266,12 @@ function renderHistoryRecordingsPanel() {
         buildHistoryMetaChip("history_label_size", Number(selected.size_bytes) > 0 ? `${formatMb(selected.size_bytes)}MB` : t("history_unknown")),
         buildHistoryMetaChip("history_label_modified", formatLocalDateTime(selected.modified_at)),
         buildHistoryMetaChip("history_label_duration", historyDurationText(selected.duration_s)),
+        buildHistoryMetaChip(
+          "history_label_change_at",
+          Boolean(selected.change_preview_available) && Number.isFinite(Number(selected.change_preview_time_s))
+            ? formatDurationClock(Number(selected.change_preview_time_s))
+            : t("history_unknown")
+        ),
         buildHistoryMetaChip("history_label_fps", Number(selected.record_fps) > 0 ? String(selected.record_fps) : t("history_unknown")),
         buildHistoryMetaChip("history_label_frames", Number(selected.written_frames) > 0 ? String(selected.written_frames) : t("history_unknown")),
       ].join("");
@@ -2130,6 +2279,8 @@ function renderHistoryRecordingsPanel() {
       metaNode.innerHTML = "";
     }
   }
+
+  syncHistoryTimelineControls();
 
   if (historyLoading) {
     statusNode.textContent = t("history_status_loading");
@@ -2169,10 +2320,28 @@ function renderHistoryRecordingsPanel() {
   statusNode.textContent = t("history_status_select");
 }
 
-function selectHistoryRecording(videoKey) {
+function selectHistoryRecording(videoKey, seekSeconds = null) {
   const nextKey = String(videoKey || "");
   if (!nextKey) {
     return;
+  }
+  const seek = Number(seekSeconds);
+  const hasSeek = Number.isFinite(seek) && seek >= 0;
+  historyPendingSeekSeconds = hasSeek ? seek : null;
+  if (historyLoadedKey === nextKey && hasSeek) {
+    const video = document.getElementById("history-recording-video");
+    if (video) {
+      const duration = Number(video.duration || 0);
+      if (Number.isFinite(duration) && duration > 0) {
+        const target = Math.max(0, Math.min(seek, Math.max(0, duration - 0.05)));
+        try {
+          video.currentTime = target;
+          historyPendingSeekSeconds = null;
+        } catch (_err) {
+          // ignore invalid seek
+        }
+      }
+    }
   }
   historySelectedKey = nextKey;
   loadHistoryRecordingVideo(nextKey);
@@ -2191,7 +2360,7 @@ async function loadHistoryRecordings(force = false) {
   renderHistoryRecordingsPanel();
 
   try {
-    const response = await fetch("/api/real/recordings?limit=240", { cache: "no-store" });
+    const response = await fetch("/api/real/recordings?limit=80", { cache: "no-store" });
     if (!response.ok) {
       throw new Error(await responseDetailText(response));
     }
@@ -2206,6 +2375,7 @@ async function loadHistoryRecordings(force = false) {
     if (!historySelectedKey || !historyRecordings.some((item) => String(item?.video_key || "") === historySelectedKey)) {
       historySelectedKey = String(historyRecordings[0]?.video_key || "");
       historyLoadedKey = "";
+      historyPendingSeekSeconds = null;
     }
 
     if (historySelectedKey) {
@@ -2216,6 +2386,7 @@ async function loadHistoryRecordings(force = false) {
         clearHistoryRecordingVideo(video);
       }
       historyLoadedKey = "";
+      historyPendingSeekSeconds = null;
     }
   } catch (err) {
     if (requestSeq !== historyRequestSeq) {
@@ -2226,6 +2397,7 @@ async function loadHistoryRecordings(force = false) {
       historySummary = null;
       historyLoadedKey = "";
       historySelectedKey = "";
+      historyPendingSeekSeconds = null;
       const video = document.getElementById("history-recording-video");
       if (video) {
         clearHistoryRecordingVideo(video);
@@ -5196,26 +5368,77 @@ function bindEvents() {
       if (!button) {
         return;
       }
-      selectHistoryRecording(button.getAttribute("data-history-key"));
+      const jumpNode = origin.closest("[data-history-jump-seconds]");
+      const jumpRaw = jumpNode ? Number(jumpNode.getAttribute("data-history-jump-seconds")) : Number.NaN;
+      const jumpSeconds = Number.isFinite(jumpRaw) && jumpRaw >= 0 ? jumpRaw : null;
+      selectHistoryRecording(button.getAttribute("data-history-key"), jumpSeconds);
     });
   }
 
   const historyVideo = document.getElementById("history-recording-video");
   if (historyVideo) {
+    historyVideo.addEventListener("loadedmetadata", () => {
+      applyHistoryPendingSeek(historyVideo);
+      syncHistoryTimelineControls();
+      renderHistoryRecordingsPanel();
+    });
     historyVideo.addEventListener("loadeddata", () => {
+      applyHistoryPendingSeek(historyVideo);
+      syncHistoryTimelineControls();
+      renderHistoryRecordingsPanel();
+    });
+    historyVideo.addEventListener("timeupdate", () => {
+      syncHistoryTimelineControls();
+    });
+    historyVideo.addEventListener("seeking", () => {
+      syncHistoryTimelineControls();
+    });
+    historyVideo.addEventListener("seeked", () => {
+      syncHistoryTimelineControls();
       renderHistoryRecordingsPanel();
     });
     historyVideo.addEventListener("play", () => {
+      syncHistoryTimelineControls();
       renderHistoryRecordingsPanel();
     });
     historyVideo.addEventListener("pause", () => {
+      syncHistoryTimelineControls();
       renderHistoryRecordingsPanel();
     });
     historyVideo.addEventListener("ended", () => {
+      syncHistoryTimelineControls();
       renderHistoryRecordingsPanel();
     });
     historyVideo.addEventListener("error", () => {
+      syncHistoryTimelineControls();
       renderHistoryRecordingsPanel();
+    });
+  }
+
+  const historyTimelineSlider = document.getElementById("history-timeline-slider");
+  if (historyTimelineSlider && historyVideo) {
+    historyTimelineSlider.addEventListener("pointerdown", () => {
+      historyTimelineDragging = true;
+    });
+    historyTimelineSlider.addEventListener("pointerup", () => {
+      historyTimelineDragging = false;
+      syncHistoryTimelineControls();
+    });
+    historyTimelineSlider.addEventListener("input", () => {
+      historyTimelineDragging = true;
+      const target = Number(historyTimelineSlider.value);
+      if (Number.isFinite(target) && target >= 0) {
+        try {
+          historyVideo.currentTime = target;
+        } catch (_err) {
+          // ignore invalid seek
+        }
+      }
+      syncHistoryTimelineControls();
+    });
+    historyTimelineSlider.addEventListener("change", () => {
+      historyTimelineDragging = false;
+      syncHistoryTimelineControls();
     });
   }
 
@@ -5316,6 +5539,21 @@ function bindEvents() {
         return;
       }
       switchSettingsSection(btn.getAttribute("data-section-id"));
+    });
+  }
+
+  const settingsForm = document.getElementById("settings-config-form");
+  if (settingsForm) {
+    settingsForm.addEventListener("change", (event) => {
+      const target = event.target.closest("[data-setting-path]");
+      const path = target?.getAttribute("data-setting-path");
+      if (!path || !["app.run_mode", "alerts.notifier_provider"].includes(path)) {
+        return;
+      }
+      if (!commitCurrentSectionEdits()) {
+        return;
+      }
+      renderSettingsSectionContent();
     });
   }
 

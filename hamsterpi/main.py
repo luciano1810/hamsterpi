@@ -55,6 +55,10 @@ ANALYSIS_COMPRESS_PROFILE_VERSION = "v2"
 ANALYSIS_COMPRESS_MIN_SIZE_RATIO = 0.35
 ANALYSIS_COMPRESS_DEFAULT_FPS = 12.0
 WHEEL_ZONE_MIN_RUNNING_STREAK_SECONDS = 1.2
+RECORDING_PREVIEW_DIR_NAME = ".recording_previews"
+RECORDING_PREVIEW_MAX_SAMPLES = 96
+RECORDING_PREVIEW_MAX_WIDTH = 360
+RECORDING_PREVIEW_JPEG_QUALITY = 88
 
 
 @app.middleware("http")
@@ -417,6 +421,147 @@ def _list_real_recordings(
         item.pop("_mtime", None)
 
     return entries[: max(1, int(limit))]
+
+
+def _resolve_recording_preview_dir(record_dir: Path) -> Path:
+    return record_dir / RECORDING_PREVIEW_DIR_NAME
+
+
+def _recording_preview_paths(record_dir: Path, video_key: str) -> tuple[Path, Path]:
+    preview_dir = _resolve_recording_preview_dir(record_dir)
+    safe_key = Path(video_key).name
+    image_path = preview_dir / f"{safe_key}.change.jpg"
+    meta_path = preview_dir / f"{safe_key}.change.meta.json"
+    return image_path, meta_path
+
+
+def _read_recording_preview_meta(meta_path: Path) -> Dict[str, Any]:
+    if not meta_path.exists() or not meta_path.is_file():
+        return {}
+    try:
+        with meta_path.open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _write_recording_preview_meta(meta_path: Path, payload: Dict[str, Any]) -> None:
+    try:
+        with meta_path.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=True, indent=2, sort_keys=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _ensure_recording_change_preview(video_path: Path, record_dir: Path) -> Dict[str, Any]:
+    preview_dir = _resolve_recording_preview_dir(record_dir)
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    image_path, meta_path = _recording_preview_paths(record_dir, video_path.name)
+
+    try:
+        source_stat = video_path.stat()
+    except OSError:
+        return {}
+    source_mtime_ns = int(getattr(source_stat, "st_mtime_ns", int(source_stat.st_mtime * 1_000_000_000)))
+
+    cached_meta = _read_recording_preview_meta(meta_path)
+    if image_path.exists():
+        cached_mtime = _safe_int(cached_meta.get("source_mtime_ns"), default=0)
+        if cached_mtime == source_mtime_ns:
+            try:
+                preview_stat = image_path.stat()
+            except OSError:
+                preview_stat = None
+            return {
+                "preview_path": image_path,
+                "change_time_s": round(float(cached_meta.get("change_time_s", 0.0) or 0.0), 3),
+                "preview_updated_at": (
+                    datetime.fromtimestamp(preview_stat.st_mtime).isoformat() if preview_stat is not None else ""
+                ),
+            }
+
+    cap, orientation = open_video_capture(video_path)
+    first_frame: Optional[np.ndarray] = None
+    best_frame: Optional[np.ndarray] = None
+    best_score = -1.0
+    best_time_s = 0.0
+
+    try:
+        frame_count = _safe_int(cap.get(cv2.CAP_PROP_FRAME_COUNT), default=0)
+        sample_step = 1
+        if frame_count > RECORDING_PREVIEW_MAX_SAMPLES:
+            sample_step = max(1, frame_count // RECORDING_PREVIEW_MAX_SAMPLES)
+
+        sampled_index = 0
+        prev_gray_small: Optional[np.ndarray] = None
+        frame_index = 0
+        while True:
+            ok, raw = cap.read()
+            if not ok:
+                break
+
+            if sample_step > 1 and (frame_index % sample_step != 0):
+                frame_index += 1
+                continue
+            frame_index += 1
+
+            frame = apply_video_orientation(raw, orientation)
+            if frame is None or frame.size == 0:
+                continue
+            if first_frame is None:
+                first_frame = frame.copy()
+
+            small = cv2.resize(frame, (96, 54), interpolation=cv2.INTER_AREA)
+            gray_small = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+            if prev_gray_small is not None:
+                diff = cv2.absdiff(gray_small, prev_gray_small)
+                score = float(np.mean(diff))
+                if score > best_score:
+                    best_score = score
+                    best_frame = frame.copy()
+                    pos_msec = float(cap.get(cv2.CAP_PROP_POS_MSEC) or 0.0)
+                    best_time_s = max(0.0, pos_msec / 1000.0)
+            prev_gray_small = gray_small
+            sampled_index += 1
+            if sampled_index >= RECORDING_PREVIEW_MAX_SAMPLES and frame_count <= 0:
+                break
+    finally:
+        cap.release()
+
+    chosen = best_frame if best_frame is not None else first_frame
+    if chosen is None or chosen.size == 0:
+        return {}
+
+    src_h, src_w = chosen.shape[:2]
+    if src_w > RECORDING_PREVIEW_MAX_WIDTH:
+        scale = float(RECORDING_PREVIEW_MAX_WIDTH / max(src_w, 1))
+        dst_w = int(RECORDING_PREVIEW_MAX_WIDTH)
+        dst_h = max(1, int(round(src_h * scale)))
+        chosen = cv2.resize(chosen, (dst_w, dst_h), interpolation=cv2.INTER_AREA)
+
+    ok = cv2.imwrite(str(image_path), chosen, [cv2.IMWRITE_JPEG_QUALITY, RECORDING_PREVIEW_JPEG_QUALITY])
+    if not ok:
+        return {}
+
+    meta_payload = {
+        "video_key": video_path.name,
+        "source_mtime_ns": source_mtime_ns,
+        "change_time_s": round(float(best_time_s), 3),
+        "generated_at": datetime.now().isoformat(),
+    }
+    _write_recording_preview_meta(meta_path, meta_payload)
+
+    try:
+        preview_stat = image_path.stat()
+    except OSError:
+        preview_stat = None
+
+    return {
+        "preview_path": image_path,
+        "change_time_s": round(float(best_time_s), 3),
+        "preview_updated_at": datetime.fromtimestamp(preview_stat.st_mtime).isoformat() if preview_stat is not None else "",
+    }
 
 
 def _empty_dashboard_payload(config: SystemConfig, source: str, status_message: str) -> Dict[str, Any]:
@@ -2106,26 +2251,44 @@ def real_recordings(limit: int = Query(default=240, ge=1, le=1000)) -> Dict[str,
     with dashboard_state.lock:
         cfg = dashboard_state.config
         snapshot = dashboard_state.real_camera.snapshot()
-        record_dir = _resolve_real_record_dir(cfg)
-        current_record_raw = str(snapshot.get("current_record_path", "") or "")
-        current_record_path = Path(current_record_raw) if current_record_raw else None
-        items = _list_real_recordings(
-            cfg,
-            active_record_path=current_record_path,
-            limit=limit,
-        )
 
-        fallback_stored_bytes = int(sum(_safe_int(item.get("size_bytes"), default=0) for item in items))
-        return {
-            "run_mode": cfg.app.run_mode,
-            "recording_enabled": bool(snapshot.get("recording_enabled", cfg.video.real_record_enabled)),
-            "recording_active": bool(snapshot.get("recording_active", False)),
-            "current_record_path": current_record_raw,
-            "record_output_dir": str(record_dir),
-            "stored_files": _safe_int(snapshot.get("stored_files"), default=len(items)),
-            "stored_bytes": _safe_int(snapshot.get("stored_bytes"), default=fallback_stored_bytes),
-            "items": items,
-        }
+    record_dir = _resolve_real_record_dir(cfg)
+    current_record_raw = str(snapshot.get("current_record_path", "") or "")
+    current_record_path = Path(current_record_raw) if current_record_raw else None
+    items = _list_real_recordings(
+        cfg,
+        active_record_path=current_record_path,
+        limit=limit,
+    )
+
+    preview_budget = min(80, len(items))
+    for idx, item in enumerate(items):
+        item["change_preview_available"] = False
+        item["change_preview_time_s"] = 0.0
+        item["change_preview_updated_at"] = ""
+        if idx >= preview_budget:
+            continue
+        video_path = Path(str(item.get("path", "")))
+        if not video_path.exists() or not video_path.is_file():
+            continue
+        preview_info = _ensure_recording_change_preview(video_path, record_dir)
+        preview_path = preview_info.get("preview_path")
+        if isinstance(preview_path, Path) and preview_path.exists():
+            item["change_preview_available"] = True
+            item["change_preview_time_s"] = round(float(preview_info.get("change_time_s", 0.0) or 0.0), 3)
+            item["change_preview_updated_at"] = str(preview_info.get("preview_updated_at", ""))
+
+    fallback_stored_bytes = int(sum(_safe_int(item.get("size_bytes"), default=0) for item in items))
+    return {
+        "run_mode": cfg.app.run_mode,
+        "recording_enabled": bool(snapshot.get("recording_enabled", cfg.video.real_record_enabled)),
+        "recording_active": bool(snapshot.get("recording_active", False)),
+        "current_record_path": current_record_raw,
+        "record_output_dir": str(record_dir),
+        "stored_files": _safe_int(snapshot.get("stored_files"), default=len(items)),
+        "stored_bytes": _safe_int(snapshot.get("stored_bytes"), default=fallback_stored_bytes),
+        "items": items,
+    }
 
 
 @app.get("/api/real/recording-video")
@@ -2158,6 +2321,44 @@ def real_recording_video(video_key: str = Query(..., min_length=1, max_length=25
             media_type=_video_media_type(resolved_target),
             filename=resolved_target.name,
         )
+
+
+@app.get("/api/real/recording-preview")
+def real_recording_preview(video_key: str = Query(..., min_length=1, max_length=255)) -> FileResponse:
+    with dashboard_state.lock:
+        cfg = dashboard_state.config
+
+    safe_key = Path(video_key).name
+    if safe_key != video_key:
+        raise HTTPException(status_code=400, detail="Invalid recording key")
+    if not safe_key.startswith("loop_"):
+        raise HTTPException(status_code=400, detail="Invalid recording key")
+
+    record_dir = _resolve_real_record_dir(cfg)
+    target = record_dir / safe_key
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Recording not found")
+    if target.suffix.lower() not in ALLOWED_VIDEO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported file extension: {target.suffix.lower()}")
+
+    try:
+        record_root = record_dir.resolve()
+        resolved_target = target.resolve()
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail="Recording not found") from exc
+    if record_root not in resolved_target.parents and resolved_target != record_root:
+        raise HTTPException(status_code=400, detail="Invalid recording path")
+
+    preview_info = _ensure_recording_change_preview(resolved_target, record_dir)
+    preview_path = preview_info.get("preview_path")
+    if not isinstance(preview_path, Path) or not preview_path.exists():
+        raise HTTPException(status_code=404, detail="Recording preview not found")
+
+    return FileResponse(
+        path=preview_path,
+        media_type="image/jpeg",
+        filename=preview_path.name,
+    )
 
 
 @app.get("/api/real/live-stream")
