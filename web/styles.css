@@ -321,183 +321,6 @@ html[data-theme="light"] .btn-solid {
   font-size: 0.86rem;
 }
 
-.history-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-
-.history-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
-  gap: 10px;
-}
-
-.history-recordings-list {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface-soft);
-  max-height: 68vh;
-  overflow: auto;
-  padding: 6px;
-  display: grid;
-  align-content: start;
-  gap: 6px;
-}
-
-.history-record-item {
-  width: 100%;
-  text-align: left;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text-main);
-  padding: 8px 9px;
-  cursor: pointer;
-  display: grid;
-  gap: 4px;
-  transition: border-color 0.18s ease, background 0.18s ease;
-}
-
-.history-record-item:hover {
-  border-color: var(--line-strong);
-  background: color-mix(in srgb, var(--surface) 85%, var(--accent-c) 15%);
-}
-
-.history-record-item.active {
-  border-color: color-mix(in srgb, var(--accent-c) 64%, var(--line) 36%);
-  background: color-mix(in srgb, var(--surface) 68%, var(--accent-c) 32%);
-}
-
-.history-record-name {
-  margin: 0;
-  font-size: 0.84rem;
-  color: var(--text-main);
-  word-break: break-word;
-}
-
-.history-record-meta {
-  margin: 0;
-  font-size: 0.77rem;
-  color: var(--text-muted);
-}
-
-.history-record-preview-wrap {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  overflow: hidden;
-  background: #05080b;
-  aspect-ratio: 16 / 9;
-}
-
-.history-record-preview {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.history-record-preview-empty {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  height: 100%;
-  font-size: 0.74rem;
-  color: var(--text-muted);
-  padding: 8px;
-  text-align: center;
-}
-
-.history-record-change {
-  margin: 0;
-  font-size: 0.75rem;
-  color: var(--kpi-hint);
-}
-
-.history-record-tag {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  border-radius: 999px;
-  padding: 3px 8px;
-  font-size: 0.72rem;
-  color: #062222;
-  background: color-mix(in srgb, var(--accent-a) 84%, white 16%);
-}
-
-html[data-theme="light"] .history-record-tag {
-  color: #f7fffc;
-  background: color-mix(in srgb, var(--accent-a) 92%, black 8%);
-}
-
-.history-player-wrap {
-  display: grid;
-  gap: 8px;
-}
-
-.history-player {
-  min-height: 240px;
-}
-
-.history-timeline {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 8px;
-  background: var(--surface-soft);
-  display: grid;
-  gap: 6px;
-}
-
-.history-timeline-slider {
-  width: 100%;
-  accent-color: var(--accent-c);
-}
-
-.history-timeline-text {
-  margin: 0;
-  display: flex;
-  justify-content: space-between;
-  color: var(--text-soft);
-  font-size: 0.78rem;
-  font-family: "Sora", sans-serif;
-}
-
-.history-recording-meta {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 8px;
-  background: var(--surface-soft);
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.history-meta-chip {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 6px 8px;
-  background: var(--surface);
-}
-
-.history-meta-label {
-  margin: 0;
-  font-size: 0.72rem;
-  font-family: "Sora", sans-serif;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-soft);
-}
-
-.history-meta-value {
-  margin: 4px 0 0;
-  font-size: 0.82rem;
-  color: var(--text-main);
-  word-break: break-word;
-}
-
 .panel-head {
   margin-bottom: 10px;
 }
@@ -1194,14 +1017,6 @@ html[data-theme="light"] .badge.low {
     grid-template-columns: 1fr;
   }
 
-  .history-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .history-recordings-list {
-    max-height: 280px;
-  }
-
   .featured-photo-box,
   .overview-quick-stats {
     min-height: 0;
@@ -1263,10 +1078,6 @@ html[data-theme="light"] .badge.low {
 @media (max-width: 560px) {
   .kpi-grid,
   .settings-btns {
-    grid-template-columns: 1fr;
-  }
-
-  .history-recording-meta {
     grid-template-columns: 1fr;
   }
 
