@@ -34,6 +34,7 @@ Defaults are tuned for 512MB memory:
 - low FPS and frame skipping (`process_every_nth_frame`)
 - reduced analysis resolution (`analysis_scale`, `max_analysis_width/height`)
 - bounded in-memory results (`max_frame_results`)
+- realtime memory guard for live stream (`live_memory_limit_mb`, default 300MB)
 - optional VLM auto-disabled in low-memory profile
 
 ## Project Layout

@@ -39,6 +39,12 @@ runtime:
   max_analysis_height: 540
   max_fps: 12
   store_debug_frames: false
+  live_memory_limit_mb: 300
+  live_memory_recovery_margin_mb: 24
+  live_memory_guard_interval_ms: 750
+  live_stream_jpeg_quality: 82
+  live_stream_jpeg_quality_under_pressure: 68
+  live_stream_max_payload_kb: 768
 motion_trigger:
   enabled: true
   downscale_width: 320

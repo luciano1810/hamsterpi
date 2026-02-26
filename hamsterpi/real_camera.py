@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import importlib
 import json
 import os
@@ -82,7 +83,7 @@ class RealCameraSettings:
 class CameraBackend(Protocol):
     name: str
 
-    def read(self) -> tuple[bool, Optional[np.ndarray]]:
+    def read(self) -> tuple[bool, Optional[np.ndarray], Optional[bytes]]:
         ...
 
     def close(self) -> None:
@@ -124,13 +125,13 @@ class OpenCVCameraBackend:
 
         self._capture = opened
 
-    def read(self) -> tuple[bool, Optional[np.ndarray]]:
+    def read(self) -> tuple[bool, Optional[np.ndarray], Optional[bytes]]:
         if self._capture is None:
-            return False, None
+            return False, None, None
         ok, frame = self._capture.read()
         if not ok or frame is None or frame.size == 0:
-            return False, None
-        return True, frame
+            return False, None, None
+        return True, frame, None
 
     def close(self) -> None:
         if self._capture is not None:
@@ -160,20 +161,20 @@ class Picamera2Backend:
         time.sleep(0.15)
         self._camera = camera
 
-    def read(self) -> tuple[bool, Optional[np.ndarray]]:
+    def read(self) -> tuple[bool, Optional[np.ndarray], Optional[bytes]]:
         if self._camera is None:
-            return False, None
+            return False, None, None
         try:
             frame_rgb = self._camera.capture_array("main")
         except Exception:  # noqa: BLE001
-            return False, None
+            return False, None, None
         if frame_rgb is None or frame_rgb.size == 0:
-            return False, None
+            return False, None, None
         if frame_rgb.ndim == 2:
             frame = cv2.cvtColor(frame_rgb, cv2.COLOR_GRAY2BGR)
         else:
             frame = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-        return True, frame
+        return True, frame, None
 
     def close(self) -> None:
         if self._camera is not None:
@@ -283,12 +284,12 @@ class RPiCamMJPEGBackend:
         del self._buffer[: end + 2]
         return payload
 
-    def read(self) -> tuple[bool, Optional[np.ndarray]]:
+    def read(self) -> tuple[bool, Optional[np.ndarray], Optional[bytes]]:
         process = self._process
         if process is None or process.stdout is None:
-            return False, None
+            return False, None, None
         if process.poll() is not None:
-            return False, None
+            return False, None, None
 
         stdout_fd = process.stdout.fileno()
         for _ in range(8):
@@ -296,29 +297,29 @@ class RPiCamMJPEGBackend:
             if payload is not None:
                 frame = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
                 if frame is not None and frame.size > 0:
-                    return True, frame
+                    return True, frame, payload
                 continue
 
             try:
                 ready, _, _ = select.select([stdout_fd], [], [], self._read_timeout_seconds)
             except (OSError, ValueError):
-                return False, None
+                return False, None, None
             if not ready:
                 if process.poll() is not None:
-                    return False, None
+                    return False, None, None
                 self._drain_stderr()
                 continue
 
             try:
                 chunk = os.read(stdout_fd, 65536)
             except OSError:
-                return False, None
+                return False, None, None
             if not chunk:
                 break
             self._buffer.extend(chunk)
             self._drain_stderr()
 
-        return False, None
+        return False, None, None
 
     def close(self) -> None:
         process = self._process
@@ -379,6 +380,7 @@ class RealCameraLoopService:
         self._record_started_monotonic = 0.0
         self._last_record_written_monotonic = 0.0
         self._next_stream_encode_monotonic = 0.0
+        self._record_suspended_until_monotonic = 0.0
         self._segment_opened_at: Optional[datetime] = None
         self._segment_first_frame_at: Optional[datetime] = None
         self._segment_last_frame_at: Optional[datetime] = None
@@ -386,10 +388,23 @@ class RealCameraLoopService:
         self._segment_error_abs_sum_ms = 0.0
         self._segment_error_abs_max_ms = 0.0
 
+        self._memory_guard_enabled = True
+        self._memory_limit_bytes = 300 * 1024 * 1024
+        self._memory_recover_bytes = 276 * 1024 * 1024
+        self._memory_check_interval_seconds = 0.75
+        self._next_memory_check_monotonic = 0.0
+        self._last_memory_rss_bytes = 0
+        self._memory_pressure = False
+
+        self._stream_jpeg_quality = 82
+        self._stream_jpeg_quality_under_pressure = 68
+        self._stream_max_payload_bytes = 768 * 1024
+
         self._analysis_downscale_width = 320
         self._analysis_blur_kernel = 5
         self._analysis_diff_threshold = 24
         self._analysis_min_motion_ratio = 0.006
+        self._analysis_morph_kernel = np.ones((3, 3), dtype=np.uint8)
 
         self._spatial_source_width = 1
         self._spatial_source_height = 1
@@ -398,13 +413,16 @@ class RealCameraLoopService:
         self._scaled_spatial_key: tuple[int, int] = (0, 0)
         self._scaled_fence_polygon: Optional[np.ndarray] = None
         self._scaled_zone_polygons: dict[str, np.ndarray] = {}
+        self._pipeline_enabled = True
 
         self._position_prev_gray: Optional[np.ndarray] = None
         self._current_position: Optional[dict[str, Any]] = None
+        self._apply_runtime_guard_config(config)
         self._apply_analysis_config(config)
 
     def apply_config(self, config: SystemConfig) -> None:
         next_settings = RealCameraSettings.from_config(config)
+        self._apply_runtime_guard_config(config)
         self._apply_analysis_config(config)
         should_restart = False
         with self._state_lock:
@@ -459,6 +477,17 @@ class RealCameraLoopService:
                 self._frame_cv.wait(timeout=remaining)
             return int(self._latest_frame_seq), self._latest_frame_jpeg
 
+    def set_pipeline_enabled(self, enabled: bool) -> None:
+        enabled_flag = bool(enabled)
+        with self._state_lock:
+            changed = enabled_flag != self._pipeline_enabled
+            self._pipeline_enabled = enabled_flag
+            if not enabled_flag:
+                self._position_prev_gray = None
+                self._current_position = None
+        if changed and not enabled_flag:
+            self._close_writer()
+
     def snapshot(self) -> dict[str, Any]:
         with self._state_lock:
             settings = self._settings
@@ -485,6 +514,11 @@ class RealCameraLoopService:
                 "record_segment_seconds": int(settings.record_segment_seconds),
                 "record_fps": int(settings.record_fps),
                 "current_position": dict(self._current_position) if isinstance(self._current_position, dict) else None,
+                "pipeline_enabled": bool(self._pipeline_enabled),
+                "memory_guard_enabled": bool(self._memory_guard_enabled),
+                "memory_limit_mb": round(float(self._memory_limit_bytes / (1024 * 1024)), 2),
+                "memory_rss_mb": round(float(self._last_memory_rss_bytes / (1024 * 1024)), 2),
+                "memory_pressure": bool(self._memory_pressure),
             }
 
         file_count, total_bytes = self._scan_record_storage(settings.record_output_dir)
@@ -541,8 +575,8 @@ class RealCameraLoopService:
                     time.sleep(1.0)
                     continue
 
-            ok, frame = backend.read()
-            if not ok or frame is None or frame.size == 0:
+            ok, raw_frame, source_jpeg = backend.read()
+            if not ok or raw_frame is None or raw_frame.size == 0:
                 self._set_status("camera read failed", opened=False, backend=backend.name, error="read frame failed")
                 LOGGER.warning(
                     "Real camera read failed",
@@ -556,13 +590,36 @@ class RealCameraLoopService:
                 time.sleep(0.4)
                 continue
 
-            frame = self._normalize_frame(frame)
-            frame = self._rotate_frame(frame)
+            frame = self._normalize_frame(raw_frame)
+            if frame is not raw_frame:
+                source_jpeg = None
+            rotated_frame = self._rotate_frame(frame)
+            if rotated_frame is not frame:
+                source_jpeg = None
+            frame = rotated_frame
             now = datetime.now()
             now_mono = time.monotonic()
-            self._publish_frame(frame, now, now_mono)
-            self._record_frame(frame, now, now_mono)
-            self._update_position_on_motion(frame, now)
+            memory_pressure = self._check_memory_pressure(now_mono)
+            self._publish_frame(frame, now, now_mono, source_jpeg=source_jpeg, under_pressure=memory_pressure)
+
+            if memory_pressure:
+                self._close_writer()
+                continue
+
+            with self._state_lock:
+                pipeline_enabled = bool(self._pipeline_enabled)
+                record_suspended_until = float(self._record_suspended_until_monotonic)
+            if not pipeline_enabled:
+                self._close_writer()
+                with self._state_lock:
+                    self._position_prev_gray = None
+                    self._current_position = None
+            elif now_mono >= record_suspended_until:
+                self._record_frame(frame, now, now_mono)
+            else:
+                self._close_writer()
+            if pipeline_enabled:
+                self._update_position_on_motion(frame, now)
 
         if backend is not None:
             try:
@@ -590,7 +647,15 @@ class RealCameraLoopService:
             return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
         return frame
 
-    def _publish_frame(self, frame: np.ndarray, now: datetime, now_mono: float) -> None:
+    def _publish_frame(
+        self,
+        frame: np.ndarray,
+        now: datetime,
+        now_mono: float,
+        *,
+        source_jpeg: Optional[bytes] = None,
+        under_pressure: bool = False,
+    ) -> None:
         settings = self._settings
         interval = 1.0 / float(max(settings.stream_fps, 1))
         if now_mono < self._next_stream_encode_monotonic and self._latest_frame_jpeg is not None:
@@ -599,10 +664,20 @@ class RealCameraLoopService:
                 self._latest_frame_size = (int(frame.shape[1]), int(frame.shape[0]))
             return
 
-        ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 82])
-        if not ok:
-            return
-        payload = encoded.tobytes()
+        payload: Optional[bytes] = None
+        if source_jpeg is not None and len(source_jpeg) <= self._stream_max_payload_bytes:
+            payload = source_jpeg
+        if payload is None:
+            jpeg_quality = (
+                self._stream_jpeg_quality_under_pressure
+                if under_pressure
+                else self._stream_jpeg_quality
+            )
+            ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, int(jpeg_quality)])
+            if not ok:
+                return
+            payload = encoded.tobytes()
+
         with self._frame_cv:
             self._latest_frame_jpeg = payload
             self._latest_frame_at = now
@@ -610,6 +685,107 @@ class RealCameraLoopService:
             self._latest_frame_seq += 1
             self._frame_cv.notify_all()
         self._next_stream_encode_monotonic = now_mono + interval
+
+    def _apply_runtime_guard_config(self, config: SystemConfig) -> None:
+        runtime = config.runtime
+        limit_mb = max(128, int(runtime.live_memory_limit_mb))
+        margin_mb = max(8, int(runtime.live_memory_recovery_margin_mb))
+        margin_mb = min(margin_mb, max(8, limit_mb - 1))
+        recover_mb = max(0, limit_mb - margin_mb)
+        guard_interval = max(0.1, float(runtime.live_memory_guard_interval_ms) / 1000.0)
+        jpeg_quality = int(runtime.live_stream_jpeg_quality)
+        pressure_quality = min(int(runtime.live_stream_jpeg_quality_under_pressure), jpeg_quality)
+        max_payload_bytes = max(64, int(runtime.live_stream_max_payload_kb)) * 1024
+
+        with self._state_lock:
+            self._memory_guard_enabled = bool(limit_mb > 0)
+            self._memory_limit_bytes = int(limit_mb * 1024 * 1024)
+            self._memory_recover_bytes = int(recover_mb * 1024 * 1024)
+            self._memory_check_interval_seconds = float(guard_interval)
+            self._next_memory_check_monotonic = 0.0
+            self._memory_pressure = False
+            self._stream_jpeg_quality = jpeg_quality
+            self._stream_jpeg_quality_under_pressure = pressure_quality
+            self._stream_max_payload_bytes = int(max_payload_bytes)
+
+    @staticmethod
+    def _read_process_rss_bytes() -> int:
+        try:
+            with open("/proc/self/statm", "r", encoding="ascii") as f:
+                parts = f.read().strip().split()
+            if len(parts) >= 2:
+                rss_pages = int(parts[1])
+                page_size = int(os.sysconf("SC_PAGE_SIZE"))
+                if rss_pages > 0 and page_size > 0:
+                    return int(rss_pages * page_size)
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            output = subprocess.check_output(
+                ["ps", "-o", "rss=", "-p", str(os.getpid())],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            rss_kb = int(str(output).strip() or "0")
+            if rss_kb <= 0:
+                return 0
+            return rss_kb * 1024
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def _check_memory_pressure(self, now_mono: float) -> bool:
+        with self._state_lock:
+            guard_enabled = bool(self._memory_guard_enabled)
+            next_check = float(self._next_memory_check_monotonic)
+            prev_pressure = bool(self._memory_pressure)
+            limit_bytes = int(self._memory_limit_bytes)
+            recover_bytes = int(self._memory_recover_bytes)
+            check_interval = float(self._memory_check_interval_seconds)
+
+        if now_mono < next_check:
+            return prev_pressure
+
+        rss_bytes = self._read_process_rss_bytes()
+        if not guard_enabled or rss_bytes <= 0:
+            pressure = False
+        elif prev_pressure:
+            pressure = rss_bytes >= max(0, recover_bytes)
+        else:
+            pressure = rss_bytes >= max(0, limit_bytes)
+
+        with self._state_lock:
+            self._last_memory_rss_bytes = int(rss_bytes)
+            self._memory_pressure = bool(pressure)
+            self._next_memory_check_monotonic = now_mono + max(0.1, check_interval)
+            if pressure:
+                self._record_suspended_until_monotonic = max(self._record_suspended_until_monotonic, now_mono + 4.0)
+
+        if pressure and not prev_pressure:
+            LOGGER.warning(
+                "Real live stream entered memory pressure mode",
+                extra={
+                    "context": {
+                        "rss_mb": round(float(rss_bytes / (1024 * 1024)), 2),
+                        "limit_mb": round(float(limit_bytes / (1024 * 1024)), 2),
+                    }
+                },
+            )
+            self._close_writer()
+            with self._state_lock:
+                self._position_prev_gray = None
+            gc.collect()
+        elif not pressure and prev_pressure:
+            LOGGER.info(
+                "Real live stream recovered from memory pressure mode",
+                extra={
+                    "context": {
+                        "rss_mb": round(float(rss_bytes / (1024 * 1024)), 2),
+                        "resume_mb": round(float(recover_bytes / (1024 * 1024)), 2),
+                    }
+                },
+            )
+        return pressure
 
     def _apply_analysis_config(self, config: SystemConfig) -> None:
         blur_kernel = int(config.motion_trigger.blur_kernel)
@@ -715,6 +891,7 @@ class RealCameraLoopService:
             diff_threshold = int(self._analysis_diff_threshold)
             min_motion_ratio = float(self._analysis_min_motion_ratio)
             prev_gray = self._position_prev_gray
+            morph_kernel = self._analysis_morph_kernel
 
         gray = self._preprocess_motion_frame(frame, downscale_width=downscale_width, blur_kernel=blur_kernel)
         if prev_gray is None or prev_gray.shape != gray.shape:
@@ -724,7 +901,7 @@ class RealCameraLoopService:
 
         diff = cv2.absdiff(prev_gray, gray)
         _, mask = cv2.threshold(diff, diff_threshold, 255, cv2.THRESH_BINARY)
-        cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8), dst=mask, iterations=1)
+        cv2.morphologyEx(mask, cv2.MORPH_OPEN, morph_kernel, dst=mask, iterations=1)
         motion_pixels = int(np.count_nonzero(mask))
         motion_ratio = float(motion_pixels) / float(max(mask.size, 1))
 

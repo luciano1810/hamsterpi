@@ -122,6 +122,20 @@ class RuntimeConfig(BaseModel):
     max_analysis_height: int = Field(default=480, ge=64)
     max_fps: int = Field(default=10, ge=1, le=60)
     store_debug_frames: bool = False
+    live_memory_limit_mb: int = Field(default=300, ge=128, le=4096)
+    live_memory_recovery_margin_mb: int = Field(default=24, ge=8, le=1024)
+    live_memory_guard_interval_ms: int = Field(default=750, ge=100, le=5000)
+    live_stream_jpeg_quality: int = Field(default=82, ge=40, le=95)
+    live_stream_jpeg_quality_under_pressure: int = Field(default=68, ge=30, le=90)
+    live_stream_max_payload_kb: int = Field(default=768, ge=64, le=4096)
+
+    @model_validator(mode="after")
+    def normalize_live_memory_guards(self) -> "RuntimeConfig":
+        if self.live_memory_recovery_margin_mb >= self.live_memory_limit_mb:
+            self.live_memory_recovery_margin_mb = max(8, self.live_memory_limit_mb // 10)
+        if self.live_stream_jpeg_quality_under_pressure > self.live_stream_jpeg_quality:
+            self.live_stream_jpeg_quality_under_pressure = self.live_stream_jpeg_quality
+        return self
 
 
 class MotionTriggerConfig(BaseModel):

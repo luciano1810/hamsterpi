@@ -34,6 +34,7 @@ HamsterPi 是一个面向树莓派（Raspberry Pi Zero 2W）优化的仓鼠监�
 - 低 FPS + 跳帧处理（`process_every_nth_frame`）
 - 降低分析分辨率（`analysis_scale`, `max_analysis_width/height`）
 - 限制内存中的结果数量（`max_frame_results`）
+- 实时直播内存守护（`live_memory_limit_mb`，默认 300MB）
 - 低内存模式下自动禁用可选 VLM
 
 ## 项目结构

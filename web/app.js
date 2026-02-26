@@ -73,6 +73,7 @@ const I18N = {
     live_status_real_loading: "正在连接真实摄像头流...",
     live_status_real_ready: "真实摄像头在线（{backend}）{recording}",
     live_status_real_waiting: "真实摄像头连接中：{status}",
+    live_status_real_need_init: "摄像头已连接，请先完成圈区初始化，随后自动开始录制与分析。",
     live_status_real_fail: "真实摄像头流加载失败：{error}",
     live_recording_on: " · 循环录制中",
     live_recording_off: " · 未录制",
@@ -261,6 +262,8 @@ const I18N = {
     mode_real_demo_tools_unavailable: "当前为真实模式，演示上传工具不可用。",
     mode_real_active: "真实摄像头在线",
     mode_real_connecting: "真实摄像头连接中",
+    mode_real_waiting_init: "真实摄像头等待圈区初始化",
+    real_init_prompt: "检测到真实摄像头已连接。请先完成圈区初始化，保存后将自动开始录制与分析。",
     status_upload_then_analyze: "请选择上传视频并完成圈区初始化。",
     status_no_frames: "视频中未检测到可分析帧。",
     status_video_analyzed: "视频分析完成。",
@@ -349,6 +352,7 @@ const I18N = {
     source_video: "视频首帧",
     source_uploaded_frame: "上传视频首帧",
     source_uploaded_preview: "上传原始首帧",
+    source_real_camera: "真实摄像头画面",
     source_placeholder: "占位图",
     source_unknown: "未知",
     alert_type_escape: "越界",
@@ -404,6 +408,7 @@ const I18N = {
     live_status_real_loading: "Connecting to real camera stream...",
     live_status_real_ready: "Real camera online ({backend}){recording}",
     live_status_real_waiting: "Real camera connecting: {status}",
+    live_status_real_need_init: "Camera connected. Complete zone initialization first, then recording and analysis will start automatically.",
     live_status_real_fail: "Failed to load real camera stream: {error}",
     live_recording_on: " · loop recording",
     live_recording_off: " · recording off",
@@ -592,6 +597,8 @@ const I18N = {
     mode_real_demo_tools_unavailable: "Demo upload tools are unavailable in real mode.",
     mode_real_active: "Real camera online",
     mode_real_connecting: "Real camera connecting",
+    mode_real_waiting_init: "Real camera waiting for zone initialization",
+    real_init_prompt: "Real camera is connected. Complete zone initialization first. Recording and analysis start automatically after save.",
     status_upload_then_analyze: "Upload a video and complete zone initialization.",
     status_no_frames: "No analyzable frames found in video.",
     status_video_analyzed: "Video analysis completed.",
@@ -680,6 +687,7 @@ const I18N = {
     source_video: "video frame",
     source_uploaded_frame: "uploaded video frame",
     source_uploaded_preview: "uploaded original first frame",
+    source_real_camera: "real camera frame",
     source_placeholder: "placeholder",
     source_unknown: "unknown",
     alert_type_escape: "Escape",
@@ -716,6 +724,7 @@ let uploadedVideoKey = "";
 let uploadedVideos = [];
 let uploadedPreviewAvailable = false;
 let uploadedZoneRequired = false;
+let realZoneRequired = false;
 let uploadedAnalyzedAt = "";
 let featuredFeedbackBusy = false;
 let featuredFeedbackMessage = "";
@@ -726,6 +735,7 @@ let liveRealStreamBound = false;
 let liveRealStreamLoaded = false;
 let liveRealStreamFailed = false;
 let realCameraMeta = null;
+let realInitPromptShown = false;
 const CLIENT_VIDEO_COMPRESS = {
   maxWidth: 960,
   maxHeight: 540,
@@ -853,6 +863,12 @@ const SETTINGS_FIELD_LABELS = {
   "runtime.max_analysis_height": { "zh-CN": "分析最大高度 (px)", "en-US": "Max Analysis Height (px)" },
   "runtime.max_fps": { "zh-CN": "最大处理帧率 (FPS)", "en-US": "Max Processing FPS" },
   "runtime.store_debug_frames": { "zh-CN": "保存调试帧", "en-US": "Store Debug Frames" },
+  "runtime.live_memory_limit_mb": { "zh-CN": "直播内存上限 (MB)", "en-US": "Live Memory Limit (MB)" },
+  "runtime.live_memory_recovery_margin_mb": { "zh-CN": "内存恢复回差 (MB)", "en-US": "Memory Recovery Margin (MB)" },
+  "runtime.live_memory_guard_interval_ms": { "zh-CN": "内存检测间隔 (ms)", "en-US": "Memory Guard Interval (ms)" },
+  "runtime.live_stream_jpeg_quality": { "zh-CN": "直播 JPEG 质量", "en-US": "Live JPEG Quality" },
+  "runtime.live_stream_jpeg_quality_under_pressure": { "zh-CN": "高内存时 JPEG 质量", "en-US": "JPEG Quality Under Pressure" },
+  "runtime.live_stream_max_payload_kb": { "zh-CN": "直播帧最大大小 (KB)", "en-US": "Max Live Frame Size (KB)" },
   "motion_trigger.enabled": { "zh-CN": "启用运动检测", "en-US": "Enable Motion Detection" },
   "motion_trigger.downscale_width": { "zh-CN": "检测降采样宽度 (px)", "en-US": "Detection Downscale Width (px)" },
   "motion_trigger.blur_kernel": { "zh-CN": "模糊核大小", "en-US": "Blur Kernel Size" },
@@ -961,6 +977,12 @@ const SETTINGS_FIELD_OPTIONS = {
   "runtime.max_analysis_width": [320, 480, 640, 960, 1280],
   "runtime.max_analysis_height": [180, 270, 360, 540, 720],
   "runtime.max_fps": [5, 8, 10, 12, 15, 20, 24, 30],
+  "runtime.live_memory_limit_mb": [192, 256, 300, 320, 384, 448, 512, 640, 768],
+  "runtime.live_memory_recovery_margin_mb": [8, 12, 16, 24, 32, 48, 64],
+  "runtime.live_memory_guard_interval_ms": [200, 400, 600, 750, 1000, 1500, 2000],
+  "runtime.live_stream_jpeg_quality": [55, 62, 68, 74, 82, 88, 92],
+  "runtime.live_stream_jpeg_quality_under_pressure": [40, 48, 56, 62, 68, 74, 80],
+  "runtime.live_stream_max_payload_kb": [192, 256, 384, 512, 640, 768, 1024, 1536, 2048],
   "motion_trigger.downscale_width": [160, 240, 320, 480, 640],
   "motion_trigger.blur_kernel": [3, 5, 7, 9, 11],
   "motion_trigger.diff_threshold": [12, 18, 24, 30, 36, 48],
@@ -1790,6 +1812,11 @@ function renderLiveVideoPanel() {
       return;
     }
 
+    if (realZoneRequired && realCameraMeta?.camera_opened) {
+      status.textContent = t("live_status_real_need_init");
+      return;
+    }
+
     if (liveRealStreamLoaded || realCameraMeta?.camera_opened) {
       const backendRaw = String(realCameraMeta?.backend || "camera");
       const backend = backendRaw.trim() || "camera";
@@ -1856,6 +1883,29 @@ function renderLiveVideoPanel() {
     status.textContent = formatText("live_status_ready", { name: liveVideoDisplayName() });
   } else {
     status.textContent = t("live_status_loading");
+  }
+}
+
+async function maybePromptRealZoneInitialization() {
+  if (currentRunMode !== "real") {
+    return;
+  }
+  if (!realZoneRequired) {
+    return;
+  }
+  if (!realCameraMeta?.camera_opened) {
+    return;
+  }
+  if (realInitPromptShown) {
+    return;
+  }
+  realInitPromptShown = true;
+  window.alert(t("real_init_prompt"));
+  openModal("init-modal");
+  try {
+    await loadInitFrame("real");
+  } catch (err) {
+    document.getElementById("init-status").textContent = String(err);
   }
 }
 
@@ -2087,6 +2137,7 @@ function statusMessageLabel(message) {
   const mapping = {
     "real camera online": "mode_real_active",
     "real camera connecting": "mode_real_connecting",
+    "real camera waiting zone init": "mode_real_waiting_init",
     "upload a video then analyze": "status_upload_then_analyze",
     "upload a video and initialize zones": "status_upload_then_analyze",
     "no uploaded video": "status_upload_then_analyze",
@@ -3062,6 +3113,15 @@ function renderGeneratedAt(data) {
   realCameraMeta = data.meta?.real_camera && typeof data.meta.real_camera === "object"
     ? data.meta.real_camera
     : null;
+  if (typeof data.meta?.real_zone_required === "boolean") {
+    realZoneRequired = data.meta.real_zone_required;
+  } else if (typeof realCameraMeta?.zone_required === "boolean") {
+    realZoneRequired = Boolean(realCameraMeta.zone_required);
+  }
+  const realCameraOpened = currentRunMode === "real" && Boolean(realCameraMeta?.camera_opened);
+  if (!realCameraOpened) {
+    realInitPromptShown = false;
+  }
   const nextUploadedAnalyzedAt = String(data.meta?.uploaded_analyzed_at || "");
   if (nextUploadedAnalyzedAt !== uploadedAnalyzedAt) {
     uploadedAnalyzedAt = nextUploadedAnalyzedAt;
@@ -3074,6 +3134,7 @@ function renderGeneratedAt(data) {
 function renderDashboard(data) {
   renderGeneratedAt(data);
   renderLiveVideoPanel();
+  void maybePromptRealZoneInitialization();
   renderKpis(data.summary);
   renderFeaturedPhoto(data);
   renderOverviewQuickStats(data);
@@ -3578,6 +3639,9 @@ function closeModal(id) {
 }
 
 function sourceLabel(source) {
+  if (source === "real_camera") {
+    return t("source_real_camera");
+  }
   if (source === "uploaded_preview") {
     return t("source_uploaded_preview");
   }
@@ -3594,6 +3658,9 @@ function sourceLabel(source) {
 }
 
 function preferredInitFrameSource() {
+  if (currentRunMode === "real") {
+    return "real";
+  }
   if (currentRunMode === "demo" && currentDemoSource === "uploaded_video") {
     return "uploaded";
   }
@@ -3604,7 +3671,12 @@ async function loadInitFrame(source = "auto") {
   document.getElementById("init-status").textContent = t("init_status_loading");
   const payload = await fetchInitFramePayload(source);
   if (typeof payload.zone_required === "boolean") {
-    uploadedZoneRequired = payload.zone_required;
+    const fromRealCamera = payload.source === "real_camera" || payload.requested_source === "real";
+    if (currentRunMode === "real" || fromRealCamera) {
+      realZoneRequired = Boolean(payload.zone_required);
+    } else {
+      uploadedZoneRequired = Boolean(payload.zone_required);
+    }
   }
   if (!payload.image_b64) {
     throw new Error("init frame response missing image data");
@@ -3771,6 +3843,9 @@ async function saveInitZones() {
   if (typeof saved.uploaded_zone_required === "boolean") {
     uploadedZoneRequired = saved.uploaded_zone_required;
   }
+  if (typeof saved.real_zone_required === "boolean") {
+    realZoneRequired = Boolean(saved.real_zone_required);
+  }
   statusNode.textContent = t("init_status_saved");
   await loadConfig();
   await loadDemoStatus();
@@ -3825,6 +3900,9 @@ async function loadDemoStatus() {
     }
     uploadedPreviewAvailable = Boolean(status.uploaded_preview_available);
     uploadedZoneRequired = Boolean(status.zone_required);
+    if (typeof status.real_zone_required === "boolean") {
+      realZoneRequired = Boolean(status.real_zone_required);
+    }
     uploadedAnalyzedAt = String(status.uploaded_analyzed_at || uploadedAnalyzedAt || "");
     updateModeSelectorsLabel();
     renderUploadedVideoSelector();

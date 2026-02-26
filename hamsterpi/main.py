@@ -110,7 +110,7 @@ class InitMappingPreviewPayload(BaseModel):
     zones: Dict[str, List[List[int]]] = Field(default_factory=dict)
     frame_width: Optional[int] = Field(default=None, ge=1)
     frame_height: Optional[int] = Field(default=None, ge=1)
-    source: str = Field(default="auto", pattern="^(auto|uploaded|config)$")
+    source: str = Field(default="auto", pattern="^(auto|uploaded|config|real)$")
     preview_token: str = Field(default="", max_length=120)
 
 
@@ -899,11 +899,13 @@ class DashboardState:
         self._featured_feedback_history: List[Dict[str, str]] = []
         self.init_preview_frame: Optional[np.ndarray] = None
         self.init_preview_token: str = ""
+        self.real_zone_required: bool = self.config.app.run_mode == "real"
         self.real_camera = RealCameraLoopService(self.config)
         self._sync_real_camera_mode()
 
     def _sync_real_camera_mode(self) -> None:
         self.real_camera.apply_config(self.config)
+        self.real_camera.set_pipeline_enabled(not self.real_zone_required)
         if self.config.app.run_mode == "real":
             self.real_camera.start()
         else:
@@ -1102,6 +1104,11 @@ class DashboardState:
             extra={"context": {"path": str(self.uploaded_video_path)}},
         )
 
+    def mark_real_camera_zones_initialized(self) -> None:
+        self.real_zone_required = False
+        self.real_camera.set_pipeline_enabled(True)
+        LOGGER.info("Real camera zones initialized")
+
     def analyze_uploaded_video(self, max_frames: Optional[int] = None) -> Dict[str, Any]:
         perf_started = time.perf_counter()
         self.activate_uploaded_demo_source()
@@ -1208,11 +1215,16 @@ class DashboardState:
         return payload
 
     def reload_from_disk(self) -> None:
+        prev_mode = self.config.app.run_mode
         self.config = load_config(default_config_path())
         configure_logging(self.config.logging)
         self.generator = VirtualDatasetGenerator(self.config)
         self.payload = self.generator.generate(self.config.frontend.history_minutes)
         self.last_update = datetime.now()
+        if prev_mode != "real" and self.config.app.run_mode == "real":
+            self.real_zone_required = True
+        if self.config.app.run_mode != "real":
+            self.real_zone_required = False
         self._sync_real_camera_mode()
         LOGGER.info(
             "Config reloaded from disk",
@@ -1234,7 +1246,10 @@ class DashboardState:
             if not bool(real_snapshot.get("running", False)):
                 self.real_camera.start()
                 real_snapshot = self.real_camera.snapshot()
-            status_message = "real camera online" if real_snapshot.get("camera_opened") else "real camera connecting"
+            if self.real_zone_required and bool(real_snapshot.get("camera_opened")):
+                status_message = "real camera waiting zone init"
+            else:
+                status_message = "real camera online" if real_snapshot.get("camera_opened") else "real camera connecting"
             payload = _empty_dashboard_payload(
                 self.config,
                 source="real-camera",
@@ -1247,6 +1262,7 @@ class DashboardState:
             payload["meta"]["uploaded_preview_available"] = bool(self.uploaded_preview_path and self.uploaded_preview_path.exists())
             payload["meta"]["uploaded_analyzed_at"] = self.uploaded_analyzed_at.isoformat() if self.uploaded_analyzed_at else ""
             payload["meta"]["uploaded_zone_required"] = self.uploaded_zone_required
+            payload["meta"]["real_zone_required"] = self.real_zone_required
             payload["meta"]["real_camera"] = real_snapshot
             payload["overview"]["current_position"] = real_snapshot.get("current_position")
             self.payload = payload
@@ -1270,6 +1286,7 @@ class DashboardState:
             payload["meta"]["uploaded_preview_available"] = bool(self.uploaded_preview_path and self.uploaded_preview_path.exists())
             payload["meta"]["uploaded_analyzed_at"] = self.uploaded_analyzed_at.isoformat() if self.uploaded_analyzed_at else ""
             payload["meta"]["uploaded_zone_required"] = self.uploaded_zone_required
+            payload["meta"]["real_zone_required"] = self.real_zone_required
             return payload
 
         if refresh or self.should_refresh_virtual():
@@ -1284,6 +1301,7 @@ class DashboardState:
         payload["meta"]["uploaded_preview_available"] = bool(self.uploaded_preview_path and self.uploaded_preview_path.exists())
         payload["meta"]["uploaded_analyzed_at"] = self.uploaded_analyzed_at.isoformat() if self.uploaded_analyzed_at else ""
         payload["meta"]["uploaded_zone_required"] = self.uploaded_zone_required
+        payload["meta"]["real_zone_required"] = self.real_zone_required
         return payload
 
     def shutdown(self) -> None:
@@ -1662,6 +1680,20 @@ def _load_preview_frame(
     return frame, source_type
 
 
+def _read_real_camera_preview_frame(service: RealCameraLoopService, max_width: int = 0) -> Optional[np.ndarray]:
+    service.start()
+    payload = service.wait_latest_frame_jpeg(timeout_seconds=1.8)
+    if payload is None:
+        return None
+    frame = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if frame is None or frame.size == 0:
+        return None
+    if max_width > 0 and frame.shape[1] > max_width:
+        target_h = int(frame.shape[0] * max_width / max(frame.shape[1], 1))
+        frame = cv2.resize(frame, (max_width, target_h), interpolation=cv2.INTER_AREA)
+    return frame
+
+
 def _image_to_base64_jpeg(frame: np.ndarray) -> str:
     ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 92])
     if not ok:
@@ -1909,6 +1941,7 @@ def demo_status() -> Dict[str, Any]:
             "uploaded_preview_available": bool(dashboard_state.uploaded_preview_path and dashboard_state.uploaded_preview_path.exists()),
             "uploaded_analyzed_at": dashboard_state.uploaded_analyzed_at.isoformat() if dashboard_state.uploaded_analyzed_at else "",
             "zone_required": dashboard_state.uploaded_zone_required,
+            "real_zone_required": dashboard_state.real_zone_required,
             "uploaded_videos": uploaded_videos,
         }
 
@@ -1963,6 +1996,7 @@ def real_camera_status() -> Dict[str, Any]:
         if not bool(snapshot.get("running", False)):
             dashboard_state.real_camera.start()
             snapshot = dashboard_state.real_camera.snapshot()
+        snapshot["zone_required"] = bool(dashboard_state.real_zone_required)
         return snapshot
 
 
@@ -2246,25 +2280,35 @@ def feedback_featured_photo(
 @app.get("/api/init/frame")
 def get_init_frame(
     max_width: int = Query(default=0, ge=0, le=3840),
-    source: str = Query(default="auto", pattern="^(auto|uploaded|config)$"),
+    source: str = Query(default="auto", pattern="^(auto|uploaded|config|real)$"),
 ) -> Dict[str, Any]:
     with dashboard_state.lock:
         cfg = dashboard_state.config
-        preferred_video_path: Optional[Path] = None
-        preferred_preview_path: Optional[Path] = None
-        if source == "uploaded":
-            preferred_video_path = dashboard_state.uploaded_video_path
-            preferred_preview_path = dashboard_state.uploaded_preview_path
-        elif source == "auto" and cfg.app.run_mode == "demo" and cfg.app.demo_source == "uploaded_video":
-            preferred_video_path = dashboard_state.uploaded_video_path
-            preferred_preview_path = dashboard_state.uploaded_preview_path
+        use_real_source = source == "real" or (source == "auto" and cfg.app.run_mode == "real")
+        if use_real_source:
+            frame = _read_real_camera_preview_frame(dashboard_state.real_camera, max_width=max_width)
+            source_type = "real_camera"
+            if frame is None:
+                frame = _preview_placeholder(cfg.video.frame_width, cfg.video.frame_height)
+                source_type = "placeholder"
+        else:
+            preferred_video_path: Optional[Path] = None
+            preferred_preview_path: Optional[Path] = None
+            if source == "uploaded":
+                preferred_video_path = dashboard_state.uploaded_video_path
+                preferred_preview_path = dashboard_state.uploaded_preview_path
+            elif source == "auto" and cfg.app.run_mode == "demo" and cfg.app.demo_source == "uploaded_video":
+                preferred_video_path = dashboard_state.uploaded_video_path
+                preferred_preview_path = dashboard_state.uploaded_preview_path
 
-        frame, source_type = _load_preview_frame(
-            cfg,
-            max_width=max_width,
-            preferred_video_path=preferred_video_path,
-            preferred_preview_path=preferred_preview_path,
-        )
+            frame, source_type = _load_preview_frame(
+                cfg,
+                max_width=max_width,
+                preferred_video_path=preferred_video_path,
+                preferred_preview_path=preferred_preview_path,
+            )
+
+        zone_required = dashboard_state.real_zone_required if cfg.app.run_mode == "real" else dashboard_state.uploaded_zone_required
         preview_token = f"init_{int(time.time() * 1000)}_{int(frame.shape[1])}x{int(frame.shape[0])}"
         dashboard_state.init_preview_frame = frame.copy()
         dashboard_state.init_preview_token = preview_token
@@ -2272,7 +2316,7 @@ def get_init_frame(
             "source": source_type,
             "requested_source": source,
             "preview_token": preview_token,
-            "zone_required": dashboard_state.uploaded_zone_required,
+            "zone_required": zone_required,
             "width": int(frame.shape[1]),
             "height": int(frame.shape[0]),
             "image_b64": _image_to_base64_jpeg(frame),
@@ -2370,7 +2414,10 @@ def save_init_zones(payload: InitZonesPayload) -> Dict[str, Any]:
 
         save_raw_config(updated, default_config_path())
         dashboard_state.reload_from_disk()
-        dashboard_state.mark_uploaded_video_zones_initialized()
+        if dashboard_state.config.app.run_mode == "real":
+            dashboard_state.mark_real_camera_zones_initialized()
+        else:
+            dashboard_state.mark_uploaded_video_zones_initialized()
         LOGGER.info("Zones saved", extra={"context": {"config_path": str(default_config_path())}})
 
         return {
@@ -2378,6 +2425,7 @@ def save_init_zones(payload: InitZonesPayload) -> Dict[str, Any]:
             "saved_at": datetime.now().isoformat(),
             "config": _public_config(dashboard_state.config),
             "uploaded_zone_required": dashboard_state.uploaded_zone_required,
+            "real_zone_required": dashboard_state.real_zone_required,
         }
 
 
