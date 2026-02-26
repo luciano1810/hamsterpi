@@ -245,6 +245,7 @@ const I18N = {
     btn_analyze_video: "分析视频",
     init_status_loading: "正在加载预览画面...",
     init_status_source: "预览来源：{source}。请完成圈区并保存。",
+    init_status_loaded_local: "已加载本地圈区设置（来源：{source}）。如需调整可编辑后保存。",
     init_status_save: "正在保存区域到配置...",
     init_status_saved: "区域已保存，配置已热重载。",
     settings_status_loading: "正在加载配置...",
@@ -602,6 +603,7 @@ const I18N = {
     btn_analyze_video: "Analyze Video",
     init_status_loading: "Loading preview frame...",
     init_status_source: "Preview source: {source}. Draw zones and save.",
+    init_status_loaded_local: "Loaded local zone settings (source: {source}). Edit and save only if needed.",
     init_status_save: "Saving zones...",
     init_status_saved: "Zones saved and config hot-reloaded.",
     settings_status_loading: "Loading configuration...",
@@ -869,8 +871,6 @@ const SETTINGS_SECTIONS = [
       "bark_device_key",
       "bark_group",
       "bark_sound",
-      "max_stereotypy_index",
-      "max_weight_change_ratio",
     ],
     labelKey: "settings_section_notifications",
     descKey: "settings_section_notifications_desc",
@@ -4250,23 +4250,50 @@ async function loadInitFrame(source = "auto") {
   updateInitMappingVisibility();
   scheduleInitMappingPreview(true);
   window.requestAnimationFrame(() => layoutInitCanvasDisplay());
-  document.getElementById("init-status").textContent = formatText("init_status_source", { source: sourceLabel(payload.source) });
+  const localZonesReady = hasCompleteInitPolygons(initState.polygons) && payload.zone_required === false;
+  document.getElementById("init-status").textContent = formatText(
+    localZonesReady ? "init_status_loaded_local" : "init_status_source",
+    { source: sourceLabel(payload.source) }
+  );
 }
 
 async function fetchInitFramePayload(source = "auto") {
-  const query = new URLSearchParams({ source, max_width: "0" });
-  const response = await fetch(`/api/init/frame?${query.toString()}`, { cache: "no-store" });
-  if (response.ok) {
-    return response.json();
+  const fallbackOrder = [];
+  const first = String(source || "auto");
+  fallbackOrder.push(first);
+  if (first !== "auto") {
+    fallbackOrder.push("auto");
+  }
+  if (!fallbackOrder.includes("config")) {
+    fallbackOrder.push("config");
   }
 
-  let detail = `${response.status}`;
-  try {
-    detail = await responseDetailText(response);
-  } catch (_err) {
-    // keep status code text
+  let lastError = "";
+  for (const candidateSource of fallbackOrder) {
+    try {
+      const query = new URLSearchParams({ source: candidateSource, max_width: "1280" });
+      const response = await fetch(`/api/init/frame?${query.toString()}`, { cache: "no-store" });
+      if (response.ok) {
+        return response.json();
+      }
+
+      let detail = "";
+      try {
+        detail = String(await responseDetailText(response) || "").trim();
+      } catch (_err) {
+        // ignore detail parse errors
+      }
+      if (!detail) {
+        detail = response.statusText || `HTTP ${response.status}`;
+      }
+      lastError = `source=${candidateSource}, status=${response.status}, detail=${detail}`;
+    } catch (err) {
+      const detail = String(err?.message || err || "network error");
+      lastError = `source=${candidateSource}, detail=${detail}`;
+    }
   }
-  throw new Error(`init frame request failed: ${detail}`);
+
+  throw new Error(`init frame request failed: ${lastError || "unknown error"}`);
 }
 
 function currentStepKey() {
@@ -4327,9 +4354,16 @@ function switchStep(delta) {
   drawInitMappingAfterPreview();
 }
 
-function initPayloadFromState() {
+function hasCompleteInitPolygons(polygons) {
   const requiredKeys = INIT_STEPS.map((x) => x.key);
-  for (const key of requiredKeys) {
+  return requiredKeys.every((key) => {
+    const points = polygons?.[key] || [];
+    return Array.isArray(points) && points.length >= 3;
+  });
+}
+
+function initPayloadFromState() {
+  for (const key of INIT_STEPS.map((x) => x.key)) {
     const points = initState.polygons[key] || [];
     if (points.length < 3) {
       throw new Error(`${key} needs at least 3 points`);

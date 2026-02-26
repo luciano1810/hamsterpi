@@ -61,6 +61,25 @@ RECORDING_PREVIEW_MAX_WIDTH = 360
 RECORDING_PREVIEW_JPEG_QUALITY = 88
 
 
+def _has_valid_local_zones(cfg: SystemConfig) -> bool:
+    try:
+        spatial = cfg.spatial
+        if len(spatial.fence_polygon or []) < 3:
+            return False
+        if len(spatial.wheel_mask_polygon or []) < 3:
+            return False
+
+        zones = spatial.zones or {}
+        required = ("food_zone", "sand_bath_zone", "hideout_zone")
+        for key in required:
+            points = zones.get(key) or []
+            if len(points) < 3:
+                return False
+        return True
+    except Exception:
+        return False
+
+
 @app.middleware("http")
 async def http_request_logger(request: Request, call_next):
     started = time.perf_counter()
@@ -1145,7 +1164,7 @@ class DashboardState:
         self._featured_feedback_history: List[Dict[str, str]] = []
         self.init_preview_frame: Optional[np.ndarray] = None
         self.init_preview_token: str = ""
-        self.real_zone_required: bool = self.config.app.run_mode == "real"
+        self.real_zone_required: bool = self.config.app.run_mode == "real" and (not _has_valid_local_zones(self.config))
         self.real_camera = RealCameraLoopService(self.config)
         self._sync_real_camera_mode()
 
@@ -1324,8 +1343,9 @@ class DashboardState:
         self.uploaded_preview_path = preview_path if preview_path is not None and preview_path.exists() else None
         self.uploaded_payload = None
         self.uploaded_analyzed_at = None
-        self.uploaded_zone_required = True
-        self.uploaded_zone_token = str(path.resolve())
+        local_zones_ready = _has_valid_local_zones(self.config)
+        self.uploaded_zone_required = not local_zones_ready
+        self.uploaded_zone_token = str(path.resolve()) if local_zones_ready else ""
         self._reset_featured_feedback_state()
         LOGGER.info(
             "Uploaded video registered",
@@ -1334,7 +1354,7 @@ class DashboardState:
                     "path": str(path),
                     "display_name": display_name,
                     "preview_path": str(self.uploaded_preview_path) if self.uploaded_preview_path else "",
-                    "zone_required": True,
+                    "zone_required": self.uploaded_zone_required,
                 }
             },
         )
@@ -1461,16 +1481,18 @@ class DashboardState:
         return payload
 
     def reload_from_disk(self) -> None:
-        prev_mode = self.config.app.run_mode
         self.config = load_config(default_config_path())
         configure_logging(self.config.logging)
         self.generator = VirtualDatasetGenerator(self.config)
         self.payload = self.generator.generate(self.config.frontend.history_minutes)
         self.last_update = datetime.now()
-        if prev_mode != "real" and self.config.app.run_mode == "real":
-            self.real_zone_required = True
-        if self.config.app.run_mode != "real":
-            self.real_zone_required = False
+        local_zones_ready = _has_valid_local_zones(self.config)
+        self.real_zone_required = self.config.app.run_mode == "real" and (not local_zones_ready)
+
+        if self.uploaded_video_path is not None:
+            self.uploaded_zone_required = not local_zones_ready
+            if not self.uploaded_zone_required:
+                self.uploaded_zone_token = str(self.uploaded_video_path.resolve())
         self._sync_real_camera_mode()
         LOGGER.info(
             "Config reloaded from disk",
@@ -1478,6 +1500,7 @@ class DashboardState:
                 "context": {
                     "run_mode": self.config.app.run_mode,
                     "demo_source": self.config.app.demo_source,
+                    "local_zones_ready": local_zones_ready,
                     "log_file": str(resolve_log_file(self.config.logging.file_path)),
                 }
             },
@@ -1670,8 +1693,6 @@ def _read_preview_frame(video_path: Path, max_probe_frames: int = 90) -> Optiona
                 return raw
 
     cap.release()
-    if best_frame is None or _looks_like_black_frame(best_frame):
-        return None
     return best_frame
 
 
@@ -1894,27 +1915,42 @@ def _load_preview_frame(
     source = config.video.source_path
     frame: Optional[np.ndarray] = None
     source_type = "placeholder"
+    backup_frame: Optional[np.ndarray] = None
+    backup_source_type = "placeholder"
 
     if preferred_preview_path and preferred_preview_path.exists():
         frame = _read_preview_image(preferred_preview_path)
-        if frame is not None and not _looks_like_black_frame(frame):
-            source_type = "uploaded_preview"
-        else:
+        if frame is not None:
+            if not _looks_like_black_frame(frame):
+                source_type = "uploaded_preview"
+            elif backup_frame is None:
+                backup_frame = frame.copy()
+                backup_source_type = "uploaded_preview"
             frame = None
 
     if frame is None and preferred_video_path and preferred_video_path.exists():
         frame = _read_preview_frame(preferred_video_path)
-        if frame is not None and not _looks_like_black_frame(frame):
-            source_type = "uploaded_video"
-        else:
+        if frame is not None:
+            if not _looks_like_black_frame(frame):
+                source_type = "uploaded_video"
+            elif backup_frame is None:
+                backup_frame = frame.copy()
+                backup_source_type = "uploaded_video"
             frame = None
 
     if frame is None and source and Path(source).exists():
         frame = _read_preview_frame(Path(source))
-        if frame is not None and not _looks_like_black_frame(frame):
-            source_type = "video"
-        else:
+        if frame is not None:
+            if not _looks_like_black_frame(frame):
+                source_type = "video"
+            elif backup_frame is None:
+                backup_frame = frame.copy()
+                backup_source_type = "video"
             frame = None
+
+    if frame is None and backup_frame is not None:
+        frame = backup_frame
+        source_type = backup_source_type
 
     if frame is None:
         frame = _preview_placeholder(config.video.frame_width, config.video.frame_height)
@@ -2650,8 +2686,14 @@ def get_init_frame(
             frame = _read_real_camera_preview_frame(dashboard_state.real_camera, max_width=max_width)
             source_type = "real_camera"
             if frame is None:
-                frame = _preview_placeholder(cfg.video.frame_width, cfg.video.frame_height)
-                source_type = "placeholder"
+                fallback_video_path: Optional[Path] = dashboard_state.uploaded_video_path
+                fallback_preview_path: Optional[Path] = dashboard_state.uploaded_preview_path
+                frame, source_type = _load_preview_frame(
+                    cfg,
+                    max_width=max_width,
+                    preferred_video_path=fallback_video_path,
+                    preferred_preview_path=fallback_preview_path,
+                )
         else:
             preferred_video_path: Optional[Path] = None
             preferred_preview_path: Optional[Path] = None
@@ -2667,6 +2709,23 @@ def get_init_frame(
                 max_width=max_width,
                 preferred_video_path=preferred_video_path,
                 preferred_preview_path=preferred_preview_path,
+            )
+
+        if source_type == "placeholder":
+            LOGGER.warning(
+                "Init frame resolved to placeholder",
+                extra={
+                    "context": {
+                        "requested_source": source,
+                        "run_mode": cfg.app.run_mode,
+                        "demo_source": cfg.app.demo_source,
+                        "video_source_path": str(cfg.video.source_path),
+                        "video_source_exists": bool(cfg.video.source_path and Path(cfg.video.source_path).exists()),
+                        "uploaded_video_path": str(dashboard_state.uploaded_video_path) if dashboard_state.uploaded_video_path else "",
+                        "uploaded_preview_path": str(dashboard_state.uploaded_preview_path) if dashboard_state.uploaded_preview_path else "",
+                        "real_camera_status": dashboard_state.real_camera.snapshot().get("status", ""),
+                    }
+                },
             )
 
         zone_required = dashboard_state.real_zone_required if cfg.app.run_mode == "real" else dashboard_state.uploaded_zone_required
