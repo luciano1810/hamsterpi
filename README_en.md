@@ -86,6 +86,22 @@ Open:
 - `http://<pi-ip>:8000` dashboard
 - `http://<pi-ip>:8002` log console
 
+## Run As A systemd Service (Auto Start On Boot)
+
+On Raspberry Pi (systemd-based Linux), run:
+
+```bash
+sudo ./scripts/install_systemd_service.sh
+```
+
+Useful commands:
+
+```bash
+sudo systemctl status hamsterpi
+sudo systemctl restart hamsterpi
+sudo journalctl -u hamsterpi -f
+```
+
 ## Mode Switching and Upload Flow
 
 - `app.run_mode`

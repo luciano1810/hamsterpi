@@ -2304,6 +2304,10 @@ def real_recordings(limit: int = Query(default=240, ge=1, le=1000)) -> Dict[str,
         item["change_preview_updated_at"] = ""
         if idx >= preview_budget:
             continue
+        # The active MP4 segment may not have a finalized moov atom yet.
+        # Skip preview extraction until recording rotates/closes.
+        if bool(item.get("is_recording", False)):
+            continue
         video_path = Path(str(item.get("path", "")))
         if not video_path.exists() or not video_path.is_file():
             continue

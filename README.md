@@ -86,6 +86,22 @@ uvicorn hamsterpi.log_viewer:app --host 0.0.0.0 --port 8002
 - `http://<pi-ip>:8000` 仪表盘
 - `http://<pi-ip>:8002` 日志控制台
 
+## 作为 systemd 服务开机自启
+
+在树莓派（systemd 系统）上执行：
+
+```bash
+sudo ./scripts/install_systemd_service.sh
+```
+
+常用命令：
+
+```bash
+sudo systemctl status hamsterpi
+sudo systemctl restart hamsterpi
+sudo journalctl -u hamsterpi -f
+```
+
 ## 运行模式与上传流程
 
 - `app.run_mode`
