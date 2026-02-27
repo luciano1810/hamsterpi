@@ -90,8 +90,15 @@ const I18N = {
     history_label_fps: "录制 FPS",
     history_label_frames: "帧数",
     history_label_change_at: "变化时刻",
+    history_label_analysis: "分析状态",
+    history_label_analysis_frames: "分析帧数",
     history_preview_empty: "暂无变化预览",
     history_preview_alt: "变化画面预览",
+    history_analysis_pending: "待分析",
+    history_analysis_running: "分析中",
+    history_analysis_done: "已完成",
+    history_analysis_skipped_no_change: "无明显变化（已跳过）",
+    history_analysis_failed: "失败",
     history_unknown: "-",
     history_duration_unit: "秒",
     live_status_waiting_mode: "请切换到真实模式，或使用 demo + 上传视频回看。",
@@ -456,8 +463,15 @@ const I18N = {
     history_label_fps: "FPS",
     history_label_frames: "Frames",
     history_label_change_at: "Change At",
+    history_label_analysis: "Analysis",
+    history_label_analysis_frames: "Analyzed Frames",
     history_preview_empty: "No change preview",
     history_preview_alt: "Change preview frame",
+    history_analysis_pending: "Pending",
+    history_analysis_running: "Running",
+    history_analysis_done: "Done",
+    history_analysis_skipped_no_change: "Skipped (no significant change)",
+    history_analysis_failed: "Failed",
     history_unknown: "-",
     history_duration_unit: "s",
     live_status_waiting_mode: "Switch to real mode, or use demo + uploaded_video playback.",
@@ -2365,21 +2379,6 @@ function buildHistoryDateBuckets(items) {
   return buckets;
 }
 
-function historyPickDefaultSelection() {
-  for (const dateBucket of historyDateBuckets) {
-    for (let hour = 23; hour >= 0; hour -= 1) {
-      const hourBucket = dateBucket.hours?.[hour];
-      if (hourBucket && Array.isArray(hourBucket.segments) && hourBucket.segments.length > 0) {
-        return { date_key: String(dateBucket.date_key || ""), hour };
-      }
-    }
-  }
-  if (historyDateBuckets.length > 0) {
-    return { date_key: String(historyDateBuckets[0].date_key || ""), hour: 0 };
-  }
-  return null;
-}
-
 function historySelectedDateBucket() {
   if (!historySelectedDateKey) {
     return null;
@@ -2523,6 +2522,15 @@ function historyDurationText(durationSeconds) {
   return `${seconds.toFixed(digits)} ${t("history_duration_unit")}`;
 }
 
+function historyAnalysisStatusLabel(statusRaw) {
+  const status = String(statusRaw || "").toLowerCase();
+  if (status === "running") return t("history_analysis_running");
+  if (status === "done") return t("history_analysis_done");
+  if (status === "skipped_no_change") return t("history_analysis_skipped_no_change");
+  if (status === "failed") return t("history_analysis_failed");
+  return t("history_analysis_pending");
+}
+
 function historySelectedItem() {
   if (!historySelectedKey) {
     return null;
@@ -2658,13 +2666,20 @@ function selectHistoryDate(dateKey) {
   if (!dateBucket) {
     return;
   }
-  let nextHour = Number.isInteger(historySelectedHour) ? historySelectedHour : -1;
-  const currentHourBucket = nextHour >= 0 && nextHour <= 23 ? dateBucket.hours[nextHour] : null;
-  if (nextHour < 0 || nextHour > 23 || !currentHourBucket || currentHourBucket.segments.length === 0) {
-    const latestHourWithVideo = [...dateBucket.hours].reverse().find((hourBucket) => hourBucket.segments.length > 0);
-    nextHour = latestHourWithVideo ? latestHourWithVideo.hour : 0;
+  if (historySelectedDateKey !== normalizedDate) {
+    historySelectedDateKey = normalizedDate;
+    historySelectedHour = -1;
+    historySelectedKey = "";
+    historyHourSeekSeconds = 0;
+    historyPendingSeekSeconds = null;
+    historyTimelineAutoPlayPending = false;
+    const video = document.getElementById("history-recording-video");
+    if (video && historyLoadedKey) {
+      clearHistoryRecordingVideo(video);
+    }
+    historyLoadedKey = "";
   }
-  selectHistoryHour(normalizedDate, nextHour, 0, false);
+  renderHistoryRecordingsPanel();
 }
 
 function selectHistoryHour(dateKey, hour, seekSeconds = 0, autoplay = false) {
@@ -2717,10 +2732,7 @@ function renderHistoryRecordingsPanel() {
     summaryNode.textContent = "";
   }
 
-  const selectedDateBucket = historySelectedDateBucket() || historyDateBuckets[0] || null;
-  if (selectedDateBucket && selectedDateBucket.date_key !== historySelectedDateKey) {
-    historySelectedDateKey = String(selectedDateBucket.date_key || "");
-  }
+  const selectedDateBucket = historySelectedDateBucket();
 
   if (historyRecordings.length === 0 || historyDateBuckets.length === 0) {
     listNode.innerHTML = `<p class="history-record-meta">${escapeHtml(t("history_status_empty"))}</p>`;
@@ -2787,16 +2799,21 @@ function renderHistoryRecordingsPanel() {
       })
       .join("")
     : "";
+  const hourSelectorHtml = selectedDateBucket
+    ? `
+      <div class="history-selector-block">
+        <p class="history-selector-label">${escapeHtml(t("history_filter_hours"))}</p>
+        <div class="history-hour-grid">${hourButtonsHtml}</div>
+      </div>
+    `
+    : "";
 
   listNode.innerHTML = `
     <div class="history-selector-block">
       <p class="history-selector-label">${escapeHtml(t("history_filter_date"))}</p>
       <div class="history-date-list">${dateButtonsHtml}</div>
     </div>
-    <div class="history-selector-block">
-      <p class="history-selector-label">${escapeHtml(t("history_filter_hours"))}</p>
-      <div class="history-hour-grid">${hourButtonsHtml}</div>
-    </div>
+    ${hourSelectorHtml}
   `;
 
   const selected = historySelectedItem();
@@ -2817,6 +2834,13 @@ function renderHistoryRecordingsPanel() {
             : t("history_unknown")
         )
       );
+      chips.push(buildHistoryMetaChip("history_label_analysis", historyAnalysisStatusLabel(selected.analysis_status)));
+      const analyzedCount = Number(selected.analysis_analyzed_count ?? 0);
+      const processedCount = Number(selected.analysis_processed_count ?? 0);
+      const analysisFramesText = (analyzedCount > 0 || processedCount > 0)
+        ? `${Math.round(analyzedCount)} / ${Math.round(processedCount)}`
+        : t("history_unknown");
+      chips.push(buildHistoryMetaChip("history_label_analysis_frames", analysisFramesText));
       chips.push(buildHistoryMetaChip("history_label_fps", Number(selected.record_fps) > 0 ? String(selected.record_fps) : t("history_unknown")));
       chips.push(buildHistoryMetaChip("history_label_frames", Number(selected.written_frames) > 0 ? String(selected.written_frames) : t("history_unknown")));
     }
@@ -2916,13 +2940,13 @@ async function loadHistoryRecordings(force = false) {
 
     const currentDate = historySelectedDateBucket();
     if (!currentDate) {
-      const fallbackSelection = historyPickDefaultSelection();
-      historySelectedDateKey = String(fallbackSelection?.date_key || historyDateBuckets[0].date_key || "");
-      historySelectedHour = Number.isInteger(fallbackSelection?.hour) ? fallbackSelection.hour : 0;
+      historySelectedDateKey = "";
+      historySelectedHour = -1;
+      historySelectedKey = "";
       historyHourSeekSeconds = 0;
     } else if (!Number.isInteger(historySelectedHour) || historySelectedHour < 0 || historySelectedHour > 23) {
-      const fallbackSelection = historyPickDefaultSelection();
-      historySelectedHour = Number.isInteger(fallbackSelection?.hour) ? fallbackSelection.hour : 0;
+      historySelectedHour = -1;
+      historySelectedKey = "";
       historyHourSeekSeconds = 0;
     }
 

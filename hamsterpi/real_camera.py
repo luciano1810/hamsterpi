@@ -380,7 +380,6 @@ class RealCameraLoopService:
         self._record_started_monotonic = 0.0
         self._last_record_written_monotonic = 0.0
         self._next_stream_encode_monotonic = 0.0
-        self._record_suspended_until_monotonic = 0.0
         self._segment_opened_at: Optional[datetime] = None
         self._segment_first_frame_at: Optional[datetime] = None
         self._segment_last_frame_at: Optional[datetime] = None
@@ -602,22 +601,15 @@ class RealCameraLoopService:
             memory_pressure = self._check_memory_pressure(now_mono)
             self._publish_frame(frame, now, now_mono, source_jpeg=source_jpeg, under_pressure=memory_pressure)
 
-            if memory_pressure:
-                self._close_writer()
-                continue
-
             with self._state_lock:
                 pipeline_enabled = bool(self._pipeline_enabled)
-                record_suspended_until = float(self._record_suspended_until_monotonic)
             if not pipeline_enabled:
                 self._close_writer()
                 with self._state_lock:
                     self._position_prev_gray = None
                     self._current_position = None
-            elif now_mono >= record_suspended_until:
-                self._record_frame(frame, now, now_mono)
             else:
-                self._close_writer()
+                self._record_frame(frame, now, now_mono)
             if pipeline_enabled:
                 self._update_position_on_motion(frame, now)
 
@@ -758,8 +750,6 @@ class RealCameraLoopService:
             self._last_memory_rss_bytes = int(rss_bytes)
             self._memory_pressure = bool(pressure)
             self._next_memory_check_monotonic = now_mono + max(0.1, check_interval)
-            if pressure:
-                self._record_suspended_until_monotonic = max(self._record_suspended_until_monotonic, now_mono + 4.0)
 
         if pressure and not prev_pressure:
             LOGGER.warning(
@@ -771,7 +761,6 @@ class RealCameraLoopService:
                     }
                 },
             )
-            self._close_writer()
             with self._state_lock:
                 self._position_prev_gray = None
             gc.collect()

@@ -7,7 +7,7 @@ from collections import defaultdict
 from copy import deepcopy
 from datetime import datetime, timedelta
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock, Thread
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import cv2
@@ -59,6 +59,13 @@ RECORDING_PREVIEW_DIR_NAME = ".recording_previews"
 RECORDING_PREVIEW_MAX_SAMPLES = 96
 RECORDING_PREVIEW_MAX_WIDTH = 360
 RECORDING_PREVIEW_JPEG_QUALITY = 88
+RECORDING_PREVIEW_CHANGE_WARMUP_SAMPLES = 2
+# Frame-content change is measured from grayscale frame-difference scores.
+RECORDING_PREVIEW_CHANGE_MAX_THRESHOLD = 6.0
+RECORDING_PREVIEW_CHANGE_MEAN_THRESHOLD = 4.0
+RECORDING_ANALYSIS_DIR_NAME = ".recording_analysis"
+RECORDING_ANALYSIS_IDLE_SECONDS = 6.0
+RECORDING_ANALYSIS_RUNNING_STALE_SECONDS = 180
 
 
 def _has_valid_local_zones(cfg: SystemConfig) -> bool:
@@ -442,6 +449,30 @@ def _list_real_recordings(
     return entries[: max(1, int(limit))]
 
 
+def _recording_source_mtime_ns(path: Path) -> int:
+    try:
+        stat = path.stat()
+    except OSError:
+        return 0
+    return int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000)))
+
+
+def _recording_has_significant_change(max_score: float, mean_score: float, score_count: int) -> bool:
+    if score_count <= 0:
+        return False
+    return (
+        max_score >= RECORDING_PREVIEW_CHANGE_MAX_THRESHOLD
+        or mean_score >= RECORDING_PREVIEW_CHANGE_MEAN_THRESHOLD
+    )
+
+
+def _parse_iso_datetime(value: Any) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(str(value))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _resolve_recording_preview_dir(record_dir: Path) -> Path:
     return record_dir / RECORDING_PREVIEW_DIR_NAME
 
@@ -452,6 +483,36 @@ def _recording_preview_paths(record_dir: Path, video_key: str) -> tuple[Path, Pa
     image_path = preview_dir / f"{safe_key}.change.jpg"
     meta_path = preview_dir / f"{safe_key}.change.meta.json"
     return image_path, meta_path
+
+
+def _resolve_recording_analysis_dir(record_dir: Path) -> Path:
+    return record_dir / RECORDING_ANALYSIS_DIR_NAME
+
+
+def _recording_analysis_meta_path(record_dir: Path, video_key: str) -> Path:
+    analysis_dir = _resolve_recording_analysis_dir(record_dir)
+    safe_key = Path(video_key).name
+    return analysis_dir / f"{safe_key}.analysis.json"
+
+
+def _read_recording_analysis_meta(meta_path: Path) -> Dict[str, Any]:
+    if not meta_path.exists() or not meta_path.is_file():
+        return {}
+    try:
+        with meta_path.open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _write_recording_analysis_meta(meta_path: Path, payload: Dict[str, Any]) -> None:
+    try:
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+        with meta_path.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=True, indent=2, sort_keys=True)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _read_recording_preview_meta(meta_path: Path) -> Dict[str, Any]:
@@ -478,23 +539,31 @@ def _ensure_recording_change_preview(video_path: Path, record_dir: Path) -> Dict
     preview_dir.mkdir(parents=True, exist_ok=True)
     image_path, meta_path = _recording_preview_paths(record_dir, video_path.name)
 
-    try:
-        source_stat = video_path.stat()
-    except OSError:
+    source_mtime_ns = _recording_source_mtime_ns(video_path)
+    if source_mtime_ns <= 0:
         return {}
-    source_mtime_ns = int(getattr(source_stat, "st_mtime_ns", int(source_stat.st_mtime * 1_000_000_000)))
 
     cached_meta = _read_recording_preview_meta(meta_path)
     if image_path.exists():
         cached_mtime = _safe_int(cached_meta.get("source_mtime_ns"), default=0)
-        if cached_mtime == source_mtime_ns:
+        has_cached_scoring = (
+            isinstance(cached_meta.get("change_score"), (int, float))
+            and "has_change" in cached_meta
+        )
+        if cached_mtime == source_mtime_ns and has_cached_scoring:
             try:
                 preview_stat = image_path.stat()
             except OSError:
                 preview_stat = None
+            cached_has_change = bool(cached_meta.get("has_change", False))
+            cached_time_s = round(float(cached_meta.get("change_time_s", 0.0) or 0.0), 3) if cached_has_change else 0.0
             return {
                 "preview_path": image_path,
-                "change_time_s": round(float(cached_meta.get("change_time_s", 0.0) or 0.0), 3),
+                "has_change": cached_has_change,
+                "change_time_s": cached_time_s,
+                "change_score": round(float(cached_meta.get("change_score", 0.0) or 0.0), 4),
+                "change_mean_score": round(float(cached_meta.get("change_mean_score", 0.0) or 0.0), 4),
+                "change_score_count": _safe_int(cached_meta.get("change_score_count"), default=0),
                 "preview_updated_at": (
                     datetime.fromtimestamp(preview_stat.st_mtime).isoformat() if preview_stat is not None else ""
                 ),
@@ -502,9 +571,12 @@ def _ensure_recording_change_preview(video_path: Path, record_dir: Path) -> Dict
 
     cap, orientation = open_video_capture(video_path)
     first_frame: Optional[np.ndarray] = None
-    best_frame: Optional[np.ndarray] = None
-    best_score = -1.0
-    best_time_s = 0.0
+    best_frame_any: Optional[np.ndarray] = None
+    best_score_any = -1.0
+    best_frame_effective: Optional[np.ndarray] = None
+    best_score_effective = -1.0
+    best_time_effective_s = 0.0
+    diff_scores: List[float] = []
 
     try:
         frame_count = _safe_int(cap.get(cv2.CAP_PROP_FRAME_COUNT), default=0)
@@ -536,11 +608,16 @@ def _ensure_recording_change_preview(video_path: Path, record_dir: Path) -> Dict
             if prev_gray_small is not None:
                 diff = cv2.absdiff(gray_small, prev_gray_small)
                 score = float(np.mean(diff))
-                if score > best_score:
-                    best_score = score
-                    best_frame = frame.copy()
-                    pos_msec = float(cap.get(cv2.CAP_PROP_POS_MSEC) or 0.0)
-                    best_time_s = max(0.0, pos_msec / 1000.0)
+                diff_scores.append(score)
+                pos_msec = float(cap.get(cv2.CAP_PROP_POS_MSEC) or 0.0)
+                pos_s = max(0.0, pos_msec / 1000.0)
+                if score > best_score_any:
+                    best_score_any = score
+                    best_frame_any = frame.copy()
+                if len(diff_scores) > RECORDING_PREVIEW_CHANGE_WARMUP_SAMPLES and score > best_score_effective:
+                    best_score_effective = score
+                    best_frame_effective = frame.copy()
+                    best_time_effective_s = pos_s
             prev_gray_small = gray_small
             sampled_index += 1
             if sampled_index >= RECORDING_PREVIEW_MAX_SAMPLES and frame_count <= 0:
@@ -548,7 +625,19 @@ def _ensure_recording_change_preview(video_path: Path, record_dir: Path) -> Dict
     finally:
         cap.release()
 
-    chosen = best_frame if best_frame is not None else first_frame
+    effective_scores = diff_scores[RECORDING_PREVIEW_CHANGE_WARMUP_SAMPLES:]
+    if not effective_scores:
+        effective_scores = diff_scores
+    change_score_count = len(effective_scores)
+    change_score = float(np.max(effective_scores)) if effective_scores else 0.0
+    change_mean_score = float(np.mean(effective_scores)) if effective_scores else 0.0
+    has_change = _recording_has_significant_change(change_score, change_mean_score, change_score_count)
+    change_time_s = best_time_effective_s if has_change and best_frame_effective is not None else 0.0
+
+    if has_change and best_frame_effective is not None:
+        chosen = best_frame_effective
+    else:
+        chosen = first_frame if first_frame is not None else best_frame_any
     if chosen is None or chosen.size == 0:
         return {}
 
@@ -566,7 +655,12 @@ def _ensure_recording_change_preview(video_path: Path, record_dir: Path) -> Dict
     meta_payload = {
         "video_key": video_path.name,
         "source_mtime_ns": source_mtime_ns,
-        "change_time_s": round(float(best_time_s), 3),
+        "has_change": has_change,
+        "change_time_s": round(float(change_time_s), 3),
+        "change_score": round(float(change_score), 4),
+        "change_mean_score": round(float(change_mean_score), 4),
+        "change_score_count": int(change_score_count),
+        "warmup_samples": int(RECORDING_PREVIEW_CHANGE_WARMUP_SAMPLES),
         "generated_at": datetime.now().isoformat(),
     }
     _write_recording_preview_meta(meta_path, meta_payload)
@@ -578,7 +672,11 @@ def _ensure_recording_change_preview(video_path: Path, record_dir: Path) -> Dict
 
     return {
         "preview_path": image_path,
-        "change_time_s": round(float(best_time_s), 3),
+        "has_change": has_change,
+        "change_time_s": round(float(change_time_s), 3),
+        "change_score": round(float(change_score), 4),
+        "change_mean_score": round(float(change_mean_score), 4),
+        "change_score_count": int(change_score_count),
         "preview_updated_at": datetime.fromtimestamp(preview_stat.st_mtime).isoformat() if preview_stat is not None else "",
     }
 
@@ -1166,7 +1264,14 @@ class DashboardState:
         self.init_preview_token: str = ""
         self.real_zone_required: bool = self.config.app.run_mode == "real" and (not _has_valid_local_zones(self.config))
         self.real_camera = RealCameraLoopService(self.config)
+        self._recording_analysis_stop_event = Event()
+        self._recording_analysis_thread: Optional[Thread] = None
+        self._recording_analysis_status: str = "idle"
+        self._recording_analysis_running_key: str = ""
+        self._recording_analysis_last_error: str = ""
+        self._recording_analysis_updated_at: str = ""
         self._sync_real_camera_mode()
+        self._start_recording_analysis_worker()
 
     def _sync_real_camera_mode(self) -> None:
         self.real_camera.apply_config(self.config)
@@ -1175,6 +1280,248 @@ class DashboardState:
             self.real_camera.start()
         else:
             self.real_camera.stop()
+
+    def _set_recording_analysis_state(
+        self,
+        *,
+        status: Optional[str] = None,
+        running_key: Optional[str] = None,
+        last_error: Optional[str] = None,
+    ) -> None:
+        with self.lock:
+            if status is not None:
+                self._recording_analysis_status = str(status)
+            if running_key is not None:
+                self._recording_analysis_running_key = str(running_key)
+            if last_error is not None:
+                self._recording_analysis_last_error = str(last_error)
+            self._recording_analysis_updated_at = datetime.now().isoformat()
+
+    def _start_recording_analysis_worker(self) -> None:
+        with self.lock:
+            if self._recording_analysis_thread is not None and self._recording_analysis_thread.is_alive():
+                return
+            self._recording_analysis_stop_event.clear()
+            self._recording_analysis_status = "idle"
+            self._recording_analysis_running_key = ""
+            self._recording_analysis_last_error = ""
+            self._recording_analysis_updated_at = datetime.now().isoformat()
+            worker = Thread(
+                target=self._recording_analysis_worker_loop,
+                name="recording-auto-analysis",
+                daemon=True,
+            )
+            self._recording_analysis_thread = worker
+            worker.start()
+
+    def _stop_recording_analysis_worker(self) -> None:
+        with self.lock:
+            worker = self._recording_analysis_thread
+            self._recording_analysis_thread = None
+            self._recording_analysis_stop_event.set()
+        if worker is not None:
+            worker.join(timeout=2.5)
+        self._set_recording_analysis_state(status="stopped", running_key="")
+
+    def recording_analysis_snapshot(self) -> Dict[str, Any]:
+        with self.lock:
+            thread = self._recording_analysis_thread
+            return {
+                "running": bool(thread is not None and thread.is_alive()),
+                "status": self._recording_analysis_status,
+                "running_video_key": self._recording_analysis_running_key,
+                "last_error": self._recording_analysis_last_error,
+                "updated_at": self._recording_analysis_updated_at,
+            }
+
+    def _recording_analysis_worker_loop(self) -> None:
+        while not self._recording_analysis_stop_event.is_set():
+            try:
+                worked = self._recording_analysis_step()
+                if not worked:
+                    self._set_recording_analysis_state(status="idle", running_key="")
+            except Exception as exc:  # noqa: BLE001
+                self._set_recording_analysis_state(status="error", running_key="", last_error=str(exc))
+                LOGGER.warning(
+                    "Auto analysis for real recordings failed",
+                    extra={"context": {"error": str(exc)}},
+                )
+            self._recording_analysis_stop_event.wait(RECORDING_ANALYSIS_IDLE_SECONDS)
+
+    def _recording_analysis_step(self) -> bool:
+        with self.lock:
+            cfg = self.config
+            camera_snapshot = self.real_camera.snapshot()
+
+        record_dir = _resolve_real_record_dir(cfg)
+        active_record_raw = str(camera_snapshot.get("current_record_path", "") or "")
+        active_record_path = Path(active_record_raw) if active_record_raw else None
+        items = _list_real_recordings(cfg, active_record_path=active_record_path, limit=1000)
+        if not items:
+            return False
+
+        candidate: Optional[Dict[str, Any]] = None
+        for item in reversed(items):
+            if bool(item.get("is_recording", False)):
+                continue
+            video_key = str(item.get("video_key", ""))
+            video_path = Path(str(item.get("path", "")))
+            if not video_key or not video_path.exists() or not video_path.is_file():
+                continue
+
+            source_mtime_ns = _recording_source_mtime_ns(video_path)
+            if source_mtime_ns <= 0:
+                continue
+
+            analysis_meta_path = _recording_analysis_meta_path(record_dir, video_key)
+            analysis_meta = _read_recording_analysis_meta(analysis_meta_path)
+            analyzed_mtime_ns = _safe_int(analysis_meta.get("source_mtime_ns"), default=0)
+            analyzed_status = str(analysis_meta.get("status", ""))
+            if analyzed_mtime_ns == source_mtime_ns:
+                if analyzed_status in {"done", "skipped_no_change", "failed"}:
+                    continue
+                if analyzed_status == "running":
+                    updated_at = _parse_iso_datetime(analysis_meta.get("updated_at"))
+                    if updated_at is not None:
+                        age_seconds = max(0.0, (datetime.now() - updated_at).total_seconds())
+                        if age_seconds < float(RECORDING_ANALYSIS_RUNNING_STALE_SECONDS):
+                            continue
+
+            preview_info = _ensure_recording_change_preview(video_path, record_dir)
+            has_change = bool(preview_info.get("has_change", False))
+            change_score = round(float(preview_info.get("change_score", 0.0) or 0.0), 4)
+            change_mean_score = round(float(preview_info.get("change_mean_score", 0.0) or 0.0), 4)
+            change_score_count = _safe_int(preview_info.get("change_score_count"), default=0)
+            change_time_s = round(float(preview_info.get("change_time_s", 0.0) or 0.0), 3) if has_change else 0.0
+
+            if not has_change:
+                _write_recording_analysis_meta(
+                    analysis_meta_path,
+                    {
+                        "video_key": video_key,
+                        "source_mtime_ns": source_mtime_ns,
+                        "status": "skipped_no_change",
+                        "has_change": False,
+                        "change_time_s": 0.0,
+                        "change_score": change_score,
+                        "change_mean_score": change_mean_score,
+                        "change_score_count": int(change_score_count),
+                        "updated_at": datetime.now().isoformat(),
+                    },
+                )
+                continue
+
+            candidate = {
+                "video_key": video_key,
+                "video_path": video_path,
+                "source_mtime_ns": source_mtime_ns,
+                "analysis_meta_path": analysis_meta_path,
+                "change_time_s": change_time_s,
+                "change_score": change_score,
+                "change_mean_score": change_mean_score,
+                "change_score_count": int(change_score_count),
+            }
+            break
+
+        if candidate is None:
+            return False
+
+        video_key = str(candidate["video_key"])
+        video_path = Path(str(candidate["video_path"]))
+        source_mtime_ns = int(candidate["source_mtime_ns"])
+        analysis_meta_path = Path(str(candidate["analysis_meta_path"]))
+        change_time_s = round(float(candidate.get("change_time_s", 0.0) or 0.0), 3)
+        change_score = round(float(candidate.get("change_score", 0.0) or 0.0), 4)
+        change_mean_score = round(float(candidate.get("change_mean_score", 0.0) or 0.0), 4)
+        change_score_count = _safe_int(candidate.get("change_score_count"), default=0)
+
+        self._set_recording_analysis_state(status="running", running_key=video_key, last_error="")
+        _write_recording_analysis_meta(
+            analysis_meta_path,
+            {
+                "video_key": video_key,
+                "source_mtime_ns": source_mtime_ns,
+                "status": "running",
+                "has_change": True,
+                "change_time_s": change_time_s,
+                "change_score": change_score,
+                "change_mean_score": change_mean_score,
+                "change_score_count": int(change_score_count),
+                "updated_at": datetime.now().isoformat(),
+            },
+        )
+
+        max_frames = max(300, cfg.runtime.max_frame_results * cfg.runtime.process_every_nth_frame)
+        try:
+            pipeline = HamsterVisionPipeline(cfg)
+            result = pipeline.process_video(video_path, max_frames=max_frames)
+            summary = result.get("summary", {})
+            dashboard_payload = _dashboard_from_pipeline_result(result, cfg, f"real-recording:{video_key}")
+
+            analysis_payload = {
+                "video_key": video_key,
+                "source_mtime_ns": source_mtime_ns,
+                "status": "done",
+                "has_change": True,
+                "change_time_s": change_time_s,
+                "change_score": change_score,
+                "change_mean_score": change_mean_score,
+                "change_score_count": int(change_score_count),
+                "updated_at": datetime.now().isoformat(),
+                "analyzed_at": datetime.now().isoformat(),
+                "analysis_processed_count": int(summary.get("processed_count", 0)),
+                "analysis_analyzed_count": int(summary.get("analyzed_count", 0)),
+                "analysis_skipped_count": int(summary.get("skipped_count", 0)),
+                "analysis_source_fps": float(summary.get("source_fps", 0.0)),
+                "analysis_frame_step": int(summary.get("frame_step", 0)),
+                "analysis_width": int(summary.get("analysis_width", 0)),
+                "analysis_height": int(summary.get("analysis_height", 0)),
+                "dashboard_meta": dict(dashboard_payload.get("meta", {})),
+                "dashboard_summary": dict(dashboard_payload.get("summary", {})),
+            }
+            _write_recording_analysis_meta(analysis_meta_path, analysis_payload)
+            self._set_recording_analysis_state(status="done", running_key="", last_error="")
+            LOGGER.info(
+                "Auto analyzed real recording",
+                extra={
+                    "context": {
+                        "video_key": video_key,
+                        "video_path": str(video_path),
+                        "change_score": change_score,
+                        "processed_count": int(summary.get("processed_count", 0)),
+                        "analyzed_count": int(summary.get("analyzed_count", 0)),
+                    }
+                },
+            )
+            return True
+        except Exception as exc:  # noqa: BLE001
+            _write_recording_analysis_meta(
+                analysis_meta_path,
+                {
+                    "video_key": video_key,
+                    "source_mtime_ns": source_mtime_ns,
+                    "status": "failed",
+                    "has_change": True,
+                    "change_time_s": change_time_s,
+                    "change_score": change_score,
+                    "change_mean_score": change_mean_score,
+                    "change_score_count": int(change_score_count),
+                    "updated_at": datetime.now().isoformat(),
+                    "error": str(exc),
+                },
+            )
+            self._set_recording_analysis_state(status="error", running_key="", last_error=str(exc))
+            LOGGER.warning(
+                "Auto analyze real recording failed",
+                extra={
+                    "context": {
+                        "video_key": video_key,
+                        "video_path": str(video_path),
+                        "error": str(exc),
+                    }
+                },
+            )
+            return True
 
     def _reset_featured_feedback_state(self) -> None:
         self.uploaded_featured_candidates = []
@@ -1574,6 +1921,7 @@ class DashboardState:
         return payload
 
     def shutdown(self) -> None:
+        self._stop_recording_analysis_worker()
         self.real_camera.stop()
 
 
@@ -2287,6 +2635,7 @@ def real_recordings(limit: int = Query(default=240, ge=1, le=1000)) -> Dict[str,
     with dashboard_state.lock:
         cfg = dashboard_state.config
         snapshot = dashboard_state.real_camera.snapshot()
+    analyzer_snapshot = dashboard_state.recording_analysis_snapshot()
 
     record_dir = _resolve_real_record_dir(cfg)
     current_record_raw = str(snapshot.get("current_record_path", "") or "")
@@ -2302,6 +2651,35 @@ def real_recordings(limit: int = Query(default=240, ge=1, le=1000)) -> Dict[str,
         item["change_preview_available"] = False
         item["change_preview_time_s"] = 0.0
         item["change_preview_updated_at"] = ""
+        item["change_score"] = 0.0
+        item["change_mean_score"] = 0.0
+        item["analysis_status"] = "pending"
+        item["analysis_available"] = False
+        item["analysis_updated_at"] = ""
+        item["analysis_analyzed_at"] = ""
+        item["analysis_error"] = ""
+        item["analysis_processed_count"] = 0
+        item["analysis_analyzed_count"] = 0
+        item["analysis_skipped_count"] = 0
+        item["analysis_source_fps"] = 0.0
+        item["analysis_frame_step"] = 0
+
+        video_key = str(item.get("video_key", ""))
+        if video_key:
+            analysis_meta_path = _recording_analysis_meta_path(record_dir, video_key)
+            analysis_meta = _read_recording_analysis_meta(analysis_meta_path)
+            if analysis_meta:
+                item["analysis_status"] = str(analysis_meta.get("status", "pending") or "pending")
+                item["analysis_available"] = item["analysis_status"] == "done"
+                item["analysis_updated_at"] = str(analysis_meta.get("updated_at", ""))
+                item["analysis_analyzed_at"] = str(analysis_meta.get("analyzed_at", ""))
+                item["analysis_error"] = str(analysis_meta.get("error", ""))
+                item["analysis_processed_count"] = _safe_int(analysis_meta.get("analysis_processed_count"), default=0)
+                item["analysis_analyzed_count"] = _safe_int(analysis_meta.get("analysis_analyzed_count"), default=0)
+                item["analysis_skipped_count"] = _safe_int(analysis_meta.get("analysis_skipped_count"), default=0)
+                item["analysis_source_fps"] = float(analysis_meta.get("analysis_source_fps", 0.0) or 0.0)
+                item["analysis_frame_step"] = _safe_int(analysis_meta.get("analysis_frame_step"), default=0)
+
         if idx >= preview_budget:
             continue
         # The active MP4 segment may not have a finalized moov atom yet.
@@ -2314,15 +2692,18 @@ def real_recordings(limit: int = Query(default=240, ge=1, le=1000)) -> Dict[str,
         preview_info = _ensure_recording_change_preview(video_path, record_dir)
         preview_path = preview_info.get("preview_path")
         if isinstance(preview_path, Path) and preview_path.exists():
-            item["change_preview_available"] = True
+            item["change_preview_available"] = bool(preview_info.get("has_change", False))
             item["change_preview_time_s"] = round(float(preview_info.get("change_time_s", 0.0) or 0.0), 3)
             item["change_preview_updated_at"] = str(preview_info.get("preview_updated_at", ""))
+            item["change_score"] = round(float(preview_info.get("change_score", 0.0) or 0.0), 4)
+            item["change_mean_score"] = round(float(preview_info.get("change_mean_score", 0.0) or 0.0), 4)
 
     fallback_stored_bytes = int(sum(_safe_int(item.get("size_bytes"), default=0) for item in items))
     return {
         "run_mode": cfg.app.run_mode,
         "recording_enabled": bool(snapshot.get("recording_enabled", cfg.video.real_record_enabled)),
         "recording_active": bool(snapshot.get("recording_active", False)),
+        "auto_analysis": analyzer_snapshot,
         "current_record_path": current_record_raw,
         "record_output_dir": str(record_dir),
         "stored_files": _safe_int(snapshot.get("stored_files"), default=len(items)),
@@ -2399,6 +2780,31 @@ def real_recording_preview(video_key: str = Query(..., min_length=1, max_length=
         media_type="image/jpeg",
         filename=preview_path.name,
     )
+
+
+@app.get("/api/real/recording-analysis")
+def real_recording_analysis(video_key: str = Query(..., min_length=1, max_length=255)) -> Dict[str, Any]:
+    with dashboard_state.lock:
+        cfg = dashboard_state.config
+
+    safe_key = Path(video_key).name
+    if safe_key != video_key:
+        raise HTTPException(status_code=400, detail="Invalid recording key")
+    if not safe_key.startswith("loop_"):
+        raise HTTPException(status_code=400, detail="Invalid recording key")
+
+    record_dir = _resolve_real_record_dir(cfg)
+    target = record_dir / safe_key
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Recording not found")
+    if target.suffix.lower() not in ALLOWED_VIDEO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported file extension: {target.suffix.lower()}")
+
+    analysis_meta_path = _recording_analysis_meta_path(record_dir, safe_key)
+    payload = _read_recording_analysis_meta(analysis_meta_path)
+    if not payload:
+        raise HTTPException(status_code=404, detail="Recording analysis not found")
+    return payload
 
 
 @app.get("/api/real/live-stream")
