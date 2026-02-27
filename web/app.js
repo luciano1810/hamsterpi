@@ -67,16 +67,23 @@ const I18N = {
     tab_live_title: "实时监控（真实模式 / 演示回看）",
     tab_live_desc: "真实模式显示 CSI 摄像头流；演示模式可回放上传视频。",
     history_title: "历史录像回放",
-    history_desc: "查看真实模式循环录制生成的历史片段，点击列表即可回放。",
+    history_desc: "按日期和24小时选择历史录像，拖动时间轴查看该小时画面。",
     history_btn_refresh: "刷新录像列表",
+    history_filter_date: "日期",
+    history_filter_hours: "24小时",
     history_status_loading: "正在加载历史录像...",
     history_status_empty: "暂无历史录像。请在真实模式开启循环录制后重试。",
     history_status_load_fail: "历史录像加载失败：{error}",
-    history_status_select: "请选择左侧录像进行回放。",
+    history_status_select: "请选择日期和小时进行回放。",
+    history_status_hour_empty: "该小时暂无录像片段。",
     history_status_playing: "正在回放：{name}",
     history_status_ready: "已载入：{name}",
     history_recording_tag: "录制中",
     history_summary: "共 {count} 段，约 {size_mb} MB",
+    history_hour_segments: "{count} 段",
+    history_hour_no_video: "无录像",
+    history_hour_has_change: "该小时检测到画面变化",
+    history_label_hour: "选中小时",
     history_label_size: "文件大小",
     history_label_modified: "更新时间",
     history_label_duration: "时长",
@@ -229,6 +236,7 @@ const I18N = {
     settings_uploaded_select_label: "已上传视频",
     settings_upload_label: "上传视频文件",
     settings_editor_label: "配置编辑器（JSON）",
+    settings_mobile_back: "返回分组",
     mode_demo: "演示模式",
     mode_real: "真实模式（CSI 摄像头）",
     source_virtual: "虚拟数据",
@@ -425,16 +433,23 @@ const I18N = {
     tab_live_title: "Realtime Monitor (Real / Demo Playback)",
     tab_live_desc: "Real mode shows CSI camera stream; demo mode plays uploaded video.",
     history_title: "Recording Playback",
-    history_desc: "Browse loop-recorded segments from real mode and play them on demand.",
+    history_desc: "Pick a date and one of 24 hours, then scrub the timeline for that hour.",
     history_btn_refresh: "Refresh Recordings",
+    history_filter_date: "Date",
+    history_filter_hours: "24 Hours",
     history_status_loading: "Loading recordings...",
     history_status_empty: "No recordings found. Enable loop recording in real mode first.",
     history_status_load_fail: "Failed to load recordings: {error}",
-    history_status_select: "Select a recording from the left list.",
+    history_status_select: "Select a date and an hour to start playback.",
+    history_status_hour_empty: "No recording segments in this hour.",
     history_status_playing: "Playing: {name}",
     history_status_ready: "Loaded: {name}",
     history_recording_tag: "Recording",
     history_summary: "{count} segments, about {size_mb} MB",
+    history_hour_segments: "{count} seg",
+    history_hour_no_video: "No video",
+    history_hour_has_change: "Detected visual change in this hour",
+    history_label_hour: "Selected Hour",
     history_label_size: "File Size",
     history_label_modified: "Modified",
     history_label_duration: "Duration",
@@ -587,6 +602,7 @@ const I18N = {
     settings_uploaded_select_label: "Uploaded Videos",
     settings_upload_label: "Upload Video",
     settings_editor_label: "Configuration Editor (JSON)",
+    settings_mobile_back: "Back to Groups",
     mode_demo: "Demo",
     mode_real: "Real (CSI Camera)",
     source_virtual: "Virtual Data",
@@ -791,6 +807,11 @@ let historyLoadError = "";
 let historyRequestSeq = 0;
 let historyTimelineDragging = false;
 let historyPendingSeekSeconds = null;
+let historyDateBuckets = [];
+let historySelectedDateKey = "";
+let historySelectedHour = -1;
+let historyHourSeekSeconds = 0;
+let historyTimelineAutoPlayPending = false;
 const CLIENT_VIDEO_COMPRESS = {
   maxWidth: 960,
   maxHeight: 540,
@@ -1113,10 +1134,16 @@ const INIT_CANVAS_MAX_HEIGHT_RATIO_DESKTOP = 0.72;
 const INIT_CANVAS_MAX_HEIGHT_RATIO_MOBILE = 0.45;
 const INIT_MAP_PREVIEW_MAX_HEIGHT = 180;
 const INIT_MAP_PREVIEW_DEBOUNCE_MS = 160;
+const SETTINGS_AUTO_SAVE_DELAY_MS = 650;
 
 let settingsRawConfig = null;
 let settingsWorkingConfig = null;
 let settingsActiveSectionId = "app";
+let settingsMobileLayer = "sections";
+let settingsAutoSaveTimer = 0;
+let settingsSaveInFlight = false;
+let settingsSavePending = false;
+let settingsLastSavedSnapshot = "";
 
 function t(key) {
   const table = I18N[currentLanguage] || I18N["zh-CN"];
@@ -1642,6 +1669,44 @@ function renderSettingsSectionList() {
   }).join("");
 }
 
+function isMobileSettingsLayout() {
+  return window.matchMedia("(max-width: 980px)").matches;
+}
+
+function applySettingsMobileLayer(nextLayer = settingsMobileLayer) {
+  const grid = document.querySelector("#settings-modal .settings-grid");
+  const backButton = document.getElementById("settings-mobile-back");
+  if (!grid) {
+    return;
+  }
+
+  grid.classList.remove("mobile-layer-sections", "mobile-layer-editor");
+  if (!isMobileSettingsLayout()) {
+    settingsMobileLayer = "sections";
+    if (backButton) {
+      backButton.classList.add("hidden");
+    }
+    return;
+  }
+
+  settingsMobileLayer = nextLayer === "editor" ? "editor" : "sections";
+  grid.classList.add(settingsMobileLayer === "editor" ? "mobile-layer-editor" : "mobile-layer-sections");
+  if (backButton) {
+    backButton.classList.toggle("hidden", settingsMobileLayer !== "editor");
+  }
+}
+
+function scheduleSettingsAutoSave(delayMs = SETTINGS_AUTO_SAVE_DELAY_MS) {
+  if (settingsAutoSaveTimer) {
+    window.clearTimeout(settingsAutoSaveTimer);
+    settingsAutoSaveTimer = 0;
+  }
+  settingsAutoSaveTimer = window.setTimeout(() => {
+    settingsAutoSaveTimer = 0;
+    void saveSettingsConfig({ auto: true, skipCommit: true });
+  }, Math.max(0, Number(delayMs) || 0));
+}
+
 function renderSettingsSectionContent() {
   const def = getSettingsSectionDef();
   const titleNode = document.getElementById("settings-section-title");
@@ -1750,6 +1815,11 @@ function commitCurrentSectionEdits() {
 
 function switchSettingsSection(nextId) {
   if (nextId === settingsActiveSectionId) {
+    if (isMobileSettingsLayout()) {
+      applySettingsMobileLayer("editor");
+      const editorWrap = document.querySelector("#settings-modal .settings-editor-wrap");
+      editorWrap?.scrollTo(0, 0);
+    }
     return;
   }
   const visible = getVisibleSettingsSections();
@@ -1759,9 +1829,15 @@ function switchSettingsSection(nextId) {
   if (!commitCurrentSectionEdits()) {
     return;
   }
+  scheduleSettingsAutoSave();
   settingsActiveSectionId = nextId;
   renderSettingsSectionList();
   renderSettingsSectionContent();
+  if (isMobileSettingsLayout()) {
+    applySettingsMobileLayer("editor");
+    const editorWrap = document.querySelector("#settings-modal .settings-editor-wrap");
+    editorWrap?.scrollTo(0, 0);
+  }
 }
 
 function setLanguage(language) {
@@ -1805,6 +1881,7 @@ function applyStaticI18n() {
   updateUploadBlockVisibility();
   renderLiveVideoPanel();
   renderHistoryRecordingsPanel();
+  applySettingsMobileLayer();
 }
 
 function updateModeSelectorsLabel() {
@@ -2086,31 +2163,314 @@ function formatDurationClock(seconds) {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+const HISTORY_HOUR_SECONDS = 3600;
+const HISTORY_HOUR_MS = HISTORY_HOUR_SECONDS * 1000;
+
+function clampHistoryHourSeconds(value) {
+  const safe = Number(value);
+  if (!Number.isFinite(safe) || safe < 0) {
+    return 0;
+  }
+  return Math.min(HISTORY_HOUR_SECONDS, safe);
+}
+
+function historyDateKeyFromMs(ms) {
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function parseHistoryDateKey(dateKey) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateKey || ""));
+  if (!match) {
+    return null;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day, 0, 0, 0, 0);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date;
+}
+
+function historyDateLabel(dateKey) {
+  const date = parseHistoryDateKey(dateKey);
+  if (!date) {
+    return t("history_unknown");
+  }
+  return date.toLocaleDateString(currentLanguage, { year: "numeric", month: "2-digit", day: "2-digit", weekday: "short" });
+}
+
+function historyHourWindowLabel(dateKey, hour) {
+  const day = parseHistoryDateKey(dateKey);
+  if (!day) {
+    return t("history_unknown");
+  }
+  const hourValue = Math.max(0, Math.min(23, Number(hour)));
+  const hh = String(hourValue).padStart(2, "0");
+  return `${day.toLocaleDateString(currentLanguage)} ${hh}:00-${hh}:59`;
+}
+
+function parseHistoryVideoStartMs(item) {
+  const openedMs = timestampMs(item?.opened_at);
+  if (openedMs !== null) {
+    return openedMs;
+  }
+
+  const key = String(item?.video_key || "");
+  const keyMatch = /^loop_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/.exec(key);
+  if (keyMatch) {
+    const year = Number(keyMatch[1]);
+    const month = Number(keyMatch[2]) - 1;
+    const day = Number(keyMatch[3]);
+    const hour = Number(keyMatch[4]);
+    const minute = Number(keyMatch[5]);
+    const second = Number(keyMatch[6]);
+    const fromName = new Date(year, month, day, hour, minute, second, 0).getTime();
+    if (Number.isFinite(fromName)) {
+      return fromName;
+    }
+  }
+
+  const modifiedMs = timestampMs(item?.modified_at);
+  const durationMs = Math.max(0, Number(item?.duration_s || 0)) * 1000;
+  if (modifiedMs !== null && Number.isFinite(durationMs) && durationMs > 0) {
+    return modifiedMs - durationMs;
+  }
+  return modifiedMs;
+}
+
+function parseHistoryVideoEndMs(item, startMs) {
+  const closedMs = timestampMs(item?.closed_at);
+  if (closedMs !== null && closedMs > startMs) {
+    return closedMs;
+  }
+  const durationMs = Math.max(0, Number(item?.duration_s || 0)) * 1000;
+  if (Number.isFinite(durationMs) && durationMs > 0) {
+    return startMs + durationMs;
+  }
+  const modifiedMs = timestampMs(item?.modified_at);
+  if (modifiedMs !== null && modifiedMs > startMs) {
+    return modifiedMs;
+  }
+  return startMs + 1000;
+}
+
+function createHistoryDateBucket(dateKey) {
+  const baseDate = parseHistoryDateKey(dateKey) || new Date();
+  const year = baseDate.getFullYear();
+  const month = baseDate.getMonth();
+  const day = baseDate.getDate();
+  return {
+    date_key: dateKey,
+    hours: Array.from({ length: 24 }, (_unused, hour) => ({
+      hour,
+      start_ms: new Date(year, month, day, hour, 0, 0, 0).getTime(),
+      end_ms: new Date(year, month, day, hour + 1, 0, 0, 0).getTime(),
+      segments: [],
+      has_change: false,
+      change_offset_s: null,
+    })),
+  };
+}
+
+function buildHistoryDateBuckets(items) {
+  const byDate = new Map();
+  const ensureDateBucket = (dateKey) => {
+    if (!byDate.has(dateKey)) {
+      byDate.set(dateKey, createHistoryDateBucket(dateKey));
+    }
+    return byDate.get(dateKey);
+  };
+
+  for (const item of items) {
+    const videoKey = String(item?.video_key || "");
+    if (!videoKey) {
+      continue;
+    }
+
+    const startMs = parseHistoryVideoStartMs(item);
+    if (!Number.isFinite(startMs)) {
+      continue;
+    }
+    let endMs = parseHistoryVideoEndMs(item, startMs);
+    if (!Number.isFinite(endMs) || endMs <= startMs) {
+      endMs = startMs + 1000;
+    }
+
+    let changeMs = null;
+    const changeSeconds = Number(item?.change_preview_time_s);
+    if (Boolean(item?.change_preview_available) && Number.isFinite(changeSeconds) && changeSeconds >= 0) {
+      changeMs = startMs + (changeSeconds * 1000);
+    }
+
+    const firstHour = new Date(startMs);
+    firstHour.setMinutes(0, 0, 0);
+    let hourCursorMs = firstHour.getTime();
+    while (hourCursorMs < endMs) {
+      const dateKey = historyDateKeyFromMs(hourCursorMs);
+      if (!dateKey) {
+        hourCursorMs += HISTORY_HOUR_MS;
+        continue;
+      }
+      const hourIndex = new Date(hourCursorMs).getHours();
+      const dateBucket = ensureDateBucket(dateKey);
+      const hourBucket = dateBucket.hours[hourIndex];
+      if (hourBucket) {
+        const overlapStartMs = Math.max(startMs, hourBucket.start_ms);
+        const overlapEndMs = Math.min(endMs, hourBucket.end_ms);
+        if (overlapEndMs > overlapStartMs) {
+          hourBucket.segments.push({
+            video_key: videoKey,
+            start_ms: startMs,
+            end_ms: endMs,
+          });
+
+          if (changeMs !== null && changeMs >= hourBucket.start_ms && changeMs < hourBucket.end_ms) {
+            hourBucket.has_change = true;
+            const changeOffsetSeconds = clampHistoryHourSeconds((changeMs - hourBucket.start_ms) / 1000);
+            const currentOffset = Number(hourBucket.change_offset_s);
+            if (!Number.isFinite(currentOffset) || changeOffsetSeconds < currentOffset) {
+              hourBucket.change_offset_s = changeOffsetSeconds;
+            }
+          } else if (changeMs === null && Boolean(item?.change_preview_available)) {
+            hourBucket.has_change = true;
+          }
+        }
+      }
+      hourCursorMs += HISTORY_HOUR_MS;
+    }
+  }
+
+  const buckets = Array.from(byDate.values());
+  for (const dateBucket of buckets) {
+    for (const hourBucket of dateBucket.hours) {
+      hourBucket.segments.sort((a, b) => {
+        if (a.start_ms !== b.start_ms) {
+          return a.start_ms - b.start_ms;
+        }
+        return String(a.video_key).localeCompare(String(b.video_key));
+      });
+    }
+  }
+
+  buckets.sort((a, b) => String(b.date_key).localeCompare(String(a.date_key)));
+  return buckets;
+}
+
+function historyPickDefaultSelection() {
+  for (const dateBucket of historyDateBuckets) {
+    for (let hour = 23; hour >= 0; hour -= 1) {
+      const hourBucket = dateBucket.hours?.[hour];
+      if (hourBucket && Array.isArray(hourBucket.segments) && hourBucket.segments.length > 0) {
+        return { date_key: String(dateBucket.date_key || ""), hour };
+      }
+    }
+  }
+  if (historyDateBuckets.length > 0) {
+    return { date_key: String(historyDateBuckets[0].date_key || ""), hour: 0 };
+  }
+  return null;
+}
+
+function historySelectedDateBucket() {
+  if (!historySelectedDateKey) {
+    return null;
+  }
+  return historyDateBuckets.find((item) => String(item?.date_key || "") === historySelectedDateKey) || null;
+}
+
+function historySelectedHourBucket() {
+  const dateBucket = historySelectedDateBucket();
+  if (!dateBucket) {
+    return null;
+  }
+  if (!Number.isInteger(historySelectedHour) || historySelectedHour < 0 || historySelectedHour > 23) {
+    return null;
+  }
+  return dateBucket.hours?.[historySelectedHour] || null;
+}
+
+function historyResolveSegmentAtOffset(hourBucket, offsetSeconds) {
+  if (!hourBucket || !Array.isArray(hourBucket.segments) || hourBucket.segments.length === 0) {
+    return null;
+  }
+  const targetOffset = clampHistoryHourSeconds(offsetSeconds);
+  const targetMs = Number(hourBucket.start_ms) + (targetOffset * 1000);
+  let chosen = hourBucket.segments.find((segment) => targetMs >= segment.start_ms && targetMs < segment.end_ms) || null;
+  if (!chosen) {
+    chosen = hourBucket.segments.find((segment) => segment.start_ms > targetMs) || hourBucket.segments[hourBucket.segments.length - 1];
+  }
+  if (!chosen) {
+    return null;
+  }
+
+  const segmentDuration = Math.max(0.1, (Number(chosen.end_ms) - Number(chosen.start_ms)) / 1000);
+  let seekSeconds = (targetMs - Number(chosen.start_ms)) / 1000;
+  if (!Number.isFinite(seekSeconds)) {
+    seekSeconds = 0;
+  }
+  const maxSeekSeconds = Math.max(0, segmentDuration - 0.05);
+  seekSeconds = Math.max(0, Math.min(seekSeconds, maxSeekSeconds));
+
+  const actualMs = Number(chosen.start_ms) + (seekSeconds * 1000);
+  const hourOffsetSeconds = clampHistoryHourSeconds((actualMs - Number(hourBucket.start_ms)) / 1000);
+  return {
+    segment: chosen,
+    segmentSeekSeconds: seekSeconds,
+    hourOffsetSeconds,
+  };
+}
+
 function syncHistoryTimelineControls() {
   const slider = document.getElementById("history-timeline-slider");
   const currentNode = document.getElementById("history-current-time");
   const totalNode = document.getElementById("history-total-time");
+  const rangeNode = document.getElementById("history-hour-range");
   const video = document.getElementById("history-recording-video");
   if (!slider || !currentNode || !totalNode || !video) {
     return;
   }
 
-  const hasSelection = Boolean(historySelectedKey);
-  const durationRaw = Number(video.duration || 0);
-  const hasDuration = Number.isFinite(durationRaw) && durationRaw > 0;
-  const duration = hasDuration ? durationRaw : 0;
-  const current = Math.max(0, Number(video.currentTime || 0));
+  const hourBucket = historySelectedHourBucket();
+  const hasHourSelection = Boolean(hourBucket);
+  const hasSegments = Boolean(hourBucket && hourBucket.segments.length > 0);
+  let currentSeconds = clampHistoryHourSeconds(historyHourSeekSeconds);
 
-  slider.disabled = !(hasSelection && hasDuration);
+  if (hourBucket && historyLoadedKey) {
+    const segment = hourBucket.segments.find((item) => String(item.video_key || "") === historyLoadedKey);
+    if (segment) {
+      const currentTime = Number(video.currentTime || 0);
+      if (Number.isFinite(currentTime) && currentTime >= 0) {
+        const offset = ((Number(segment.start_ms) - Number(hourBucket.start_ms)) / 1000) + currentTime;
+        if (Number.isFinite(offset)) {
+          currentSeconds = clampHistoryHourSeconds(offset);
+        }
+      }
+    }
+  }
+  historyHourSeekSeconds = currentSeconds;
+
+  slider.disabled = !(hasHourSelection && hasSegments);
   slider.min = "0";
-  slider.max = hasDuration ? String(duration) : "0";
+  slider.max = String(HISTORY_HOUR_SECONDS);
   slider.step = "0.1";
   if (!historyTimelineDragging) {
-    slider.value = hasDuration ? String(Math.min(current, duration)) : "0";
+    slider.value = String(currentSeconds);
   }
 
-  currentNode.textContent = formatDurationClock(current);
-  totalNode.textContent = formatDurationClock(duration);
+  currentNode.textContent = formatDurationClock(currentSeconds);
+  totalNode.textContent = formatDurationClock(HISTORY_HOUR_SECONDS);
+  if (rangeNode) {
+    rangeNode.textContent = hasHourSelection ? historyHourWindowLabel(historySelectedDateKey, historySelectedHour) : "";
+  }
 }
 
 function applyHistoryPendingSeek(video) {
@@ -2120,6 +2480,13 @@ function applyHistoryPendingSeek(video) {
   const pending = Number(historyPendingSeekSeconds);
   if (!Number.isFinite(pending) || pending < 0) {
     historyPendingSeekSeconds = null;
+    if (historyTimelineAutoPlayPending) {
+      const playPromise = video.play();
+      if (playPromise && typeof playPromise.catch === "function") {
+        playPromise.catch(() => {});
+      }
+      historyTimelineAutoPlayPending = false;
+    }
     return;
   }
   const duration = Number(video.duration || 0);
@@ -2132,6 +2499,14 @@ function applyHistoryPendingSeek(video) {
     video.currentTime = target;
   } catch (_err) {
     // ignore invalid seek
+  }
+
+  if (historyTimelineAutoPlayPending) {
+    const playPromise = video.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch(() => {});
+    }
+    historyTimelineAutoPlayPending = false;
   }
 }
 
@@ -2159,6 +2534,8 @@ function clearHistoryRecordingVideo(video) {
   video.pause();
   video.removeAttribute("src");
   video.load();
+  historyTimelineAutoPlayPending = false;
+  historyPendingSeekSeconds = null;
   syncHistoryTimelineControls();
 }
 
@@ -2192,6 +2569,133 @@ function buildHistoryMetaChip(labelKey, value) {
   `;
 }
 
+function historySeekToHourOffset(offsetSeconds, options = {}) {
+  const hourBucket = historySelectedHourBucket();
+  if (!hourBucket || hourBucket.segments.length === 0) {
+    historyHourSeekSeconds = clampHistoryHourSeconds(offsetSeconds);
+    return false;
+  }
+
+  const resolved = historyResolveSegmentAtOffset(hourBucket, offsetSeconds);
+  if (!resolved) {
+    return false;
+  }
+
+  const autoplay = Boolean(options.autoplay);
+  const targetVideoKey = String(resolved.segment.video_key || "");
+  if (!targetVideoKey) {
+    return false;
+  }
+
+  historyHourSeekSeconds = resolved.hourOffsetSeconds;
+  historySelectedKey = targetVideoKey;
+  historyPendingSeekSeconds = resolved.segmentSeekSeconds;
+  historyTimelineAutoPlayPending = autoplay;
+
+  const video = document.getElementById("history-recording-video");
+  if (video && historyLoadedKey === targetVideoKey) {
+    const duration = Number(video.duration || 0);
+    if (Number.isFinite(duration) && duration > 0) {
+      const target = Math.max(0, Math.min(resolved.segmentSeekSeconds, Math.max(0, duration - 0.05)));
+      historyPendingSeekSeconds = null;
+      try {
+        video.currentTime = target;
+      } catch (_err) {
+        // ignore invalid seek
+      }
+      if (autoplay) {
+        const playPromise = video.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch(() => {});
+        }
+        historyTimelineAutoPlayPending = false;
+      }
+    }
+  } else {
+    loadHistoryRecordingVideo(targetVideoKey);
+  }
+
+  return true;
+}
+
+function historyClampPlaybackToSelectedHour(video) {
+  if (!video) {
+    return;
+  }
+  const hourBucket = historySelectedHourBucket();
+  if (!hourBucket || hourBucket.segments.length === 0 || !historyLoadedKey) {
+    return;
+  }
+  const currentSegment = hourBucket.segments.find((segment) => String(segment.video_key || "") === historyLoadedKey);
+  if (!currentSegment) {
+    return;
+  }
+  const currentTime = Number(video.currentTime || 0);
+  if (!Number.isFinite(currentTime) || currentTime < 0) {
+    return;
+  }
+  const offsetSeconds = ((Number(currentSegment.start_ms) - Number(hourBucket.start_ms)) / 1000) + currentTime;
+  if (!Number.isFinite(offsetSeconds) || offsetSeconds < HISTORY_HOUR_SECONDS) {
+    return;
+  }
+
+  video.pause();
+  const tailSeconds = Math.max(0, HISTORY_HOUR_SECONDS - 0.05);
+  const resolved = historyResolveSegmentAtOffset(hourBucket, tailSeconds);
+  historyHourSeekSeconds = HISTORY_HOUR_SECONDS;
+  if (resolved && String(resolved.segment.video_key || "") === historyLoadedKey) {
+    try {
+      video.currentTime = resolved.segmentSeekSeconds;
+    } catch (_err) {
+      // ignore invalid seek
+    }
+  }
+}
+
+function selectHistoryDate(dateKey) {
+  const normalizedDate = String(dateKey || "");
+  const dateBucket = historyDateBuckets.find((item) => String(item?.date_key || "") === normalizedDate) || null;
+  if (!dateBucket) {
+    return;
+  }
+  let nextHour = Number.isInteger(historySelectedHour) ? historySelectedHour : -1;
+  const currentHourBucket = nextHour >= 0 && nextHour <= 23 ? dateBucket.hours[nextHour] : null;
+  if (nextHour < 0 || nextHour > 23 || !currentHourBucket || currentHourBucket.segments.length === 0) {
+    const latestHourWithVideo = [...dateBucket.hours].reverse().find((hourBucket) => hourBucket.segments.length > 0);
+    nextHour = latestHourWithVideo ? latestHourWithVideo.hour : 0;
+  }
+  selectHistoryHour(normalizedDate, nextHour, 0, false);
+}
+
+function selectHistoryHour(dateKey, hour, seekSeconds = 0, autoplay = false) {
+  const normalizedDate = String(dateKey || "");
+  const hourValue = Number(hour);
+  if (!normalizedDate || !Number.isInteger(hourValue) || hourValue < 0 || hourValue > 23) {
+    return;
+  }
+
+  historySelectedDateKey = normalizedDate;
+  historySelectedHour = hourValue;
+  historyHourSeekSeconds = clampHistoryHourSeconds(seekSeconds);
+
+  const hourBucket = historySelectedHourBucket();
+  if (!hourBucket || hourBucket.segments.length === 0) {
+    historySelectedKey = "";
+    historyPendingSeekSeconds = null;
+    historyTimelineAutoPlayPending = false;
+    const video = document.getElementById("history-recording-video");
+    if (video && historyLoadedKey) {
+      clearHistoryRecordingVideo(video);
+    }
+    historyLoadedKey = "";
+    renderHistoryRecordingsPanel();
+    return;
+  }
+
+  historySeekToHourOffset(historyHourSeekSeconds, { autoplay });
+  renderHistoryRecordingsPanel();
+}
+
 function renderHistoryRecordingsPanel() {
   const listNode = document.getElementById("history-recordings-list");
   const summaryNode = document.getElementById("history-recordings-summary");
@@ -2213,77 +2717,112 @@ function renderHistoryRecordingsPanel() {
     summaryNode.textContent = "";
   }
 
-  if (historySelectedKey && !historyRecordings.some((item) => String(item?.video_key || "") === historySelectedKey)) {
-    historySelectedKey = String(historyRecordings[0]?.video_key || "");
-    historyLoadedKey = "";
+  const selectedDateBucket = historySelectedDateBucket() || historyDateBuckets[0] || null;
+  if (selectedDateBucket && selectedDateBucket.date_key !== historySelectedDateKey) {
+    historySelectedDateKey = String(selectedDateBucket.date_key || "");
   }
 
-  if (historyRecordings.length === 0) {
+  if (historyRecordings.length === 0 || historyDateBuckets.length === 0) {
     listNode.innerHTML = `<p class="history-record-meta">${escapeHtml(t("history_status_empty"))}</p>`;
     metaNode.innerHTML = "";
-  } else {
-    listNode.innerHTML = historyRecordings
-      .map((item) => {
-        const key = String(item?.video_key || "");
-        const isActive = key === historySelectedKey;
-        const recordTag = item?.is_recording ? `<span class="history-record-tag">${escapeHtml(t("history_recording_tag"))}</span>` : "";
-        const previewTs = encodeURIComponent(String(item?.change_preview_updated_at || item?.modified_at || ""));
-        const previewSrc = `/api/real/recording-preview?video_key=${encodeURIComponent(key)}&ts=${previewTs}`;
-        const changeSeconds = Number(item?.change_preview_time_s || 0);
-        const hasPreview = Boolean(item?.change_preview_available);
-        const changeText = hasPreview && Number.isFinite(changeSeconds) && changeSeconds >= 0
-          ? `${t("history_label_change_at")} ${formatDurationClock(changeSeconds)}`
-          : `${t("history_label_change_at")} ${t("history_unknown")}`;
-        const line = [
-          Number(item?.size_bytes) > 0 ? `${formatMb(item.size_bytes)}MB` : t("history_unknown"),
-          formatLocalDateTime(item?.modified_at),
-          historyDurationText(item?.duration_s),
-        ].join(" · ");
-        const previewHtml = hasPreview
-          ? `<img
-              class="history-record-preview"
-              loading="lazy"
-              alt="${escapeHtml(t("history_preview_alt"))}"
-              src="${previewSrc}"
-              data-history-jump-seconds="${escapeHtml(String(changeSeconds))}"
-            />`
-          : `<div class="history-record-preview-empty">${escapeHtml(t("history_preview_empty"))}</div>`;
+    syncHistoryTimelineControls();
+    statusNode.textContent = historyLoading ? t("history_status_loading") : (historyLoadError ? formatText("history_status_load_fail", { error: historyLoadError }) : t("history_status_empty"));
+    return;
+  }
+
+  const dateButtonsHtml = historyDateBuckets
+    .map((dateBucket) => {
+      const dateKey = String(dateBucket.date_key || "");
+      const isActive = dateKey === historySelectedDateKey;
+      const activeHours = dateBucket.hours.filter((item) => item.segments.length > 0).length;
+      return `
+        <button
+          type="button"
+          class="history-date-item ${isActive ? "active" : ""}"
+          data-history-date-switch="true"
+          data-history-date-key="${escapeHtml(dateKey)}"
+        >
+          <span class="history-date-item-label">${escapeHtml(historyDateLabel(dateKey))}</span>
+          <span class="history-date-item-meta">${escapeHtml(`${activeHours}/24`)}</span>
+        </button>
+      `;
+    })
+    .join("");
+
+  const hourButtonsHtml = selectedDateBucket
+    ? selectedDateBucket.hours
+      .map((hourBucket) => {
+        const hourValue = Number(hourBucket.hour);
+        const hourLabel = `${String(hourValue).padStart(2, "0")}:00`;
+        const hasSegments = hourBucket.segments.length > 0;
+        const hasChange = Boolean(hourBucket.has_change);
+        const isActive = selectedDateBucket.date_key === historySelectedDateKey && historySelectedHour === hourValue;
+        const itemClasses = [
+          "history-hour-item",
+          isActive ? "active" : "",
+          hasSegments ? "" : "empty",
+          hasChange ? "has-change" : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        const itemMetaText = hasSegments
+          ? formatText("history_hour_segments", { count: hourBucket.segments.length })
+          : t("history_hour_no_video");
+        const changeDot = hasChange
+          ? `<span class="history-hour-change-dot" title="${escapeHtml(t("history_hour_has_change"))}" aria-hidden="true"></span>`
+          : "";
         return `
           <button
             type="button"
-            class="history-record-item ${isActive ? "active" : ""}"
-            data-history-key="${escapeHtml(key)}"
+            class="${itemClasses}"
+            data-history-date-key="${escapeHtml(String(selectedDateBucket.date_key || ""))}"
+            data-history-hour="${escapeHtml(String(hourValue))}"
+            data-history-seek-seconds="0"
           >
-            <div class="history-record-preview-wrap">
-              ${previewHtml}
-            </div>
-            <p class="history-record-name">${escapeHtml(historyDisplayName(item))}</p>
-            <p class="history-record-meta">${escapeHtml(line)}</p>
-            <p class="history-record-change">${escapeHtml(changeText)}</p>
-            ${recordTag}
+            <span class="history-hour-label">${escapeHtml(hourLabel)}</span>
+            <span class="history-hour-meta">${escapeHtml(itemMetaText)}</span>
+            ${changeDot}
           </button>
         `;
       })
-      .join("");
+      .join("")
+    : "";
 
-    const selected = historySelectedItem();
+  listNode.innerHTML = `
+    <div class="history-selector-block">
+      <p class="history-selector-label">${escapeHtml(t("history_filter_date"))}</p>
+      <div class="history-date-list">${dateButtonsHtml}</div>
+    </div>
+    <div class="history-selector-block">
+      <p class="history-selector-label">${escapeHtml(t("history_filter_hours"))}</p>
+      <div class="history-hour-grid">${hourButtonsHtml}</div>
+    </div>
+  `;
+
+  const selected = historySelectedItem();
+  const selectedHourBucket = historySelectedHourBucket();
+  if (selectedHourBucket) {
+    const chips = [
+      buildHistoryMetaChip("history_label_hour", historyHourWindowLabel(historySelectedDateKey, historySelectedHour)),
+    ];
     if (selected) {
-      metaNode.innerHTML = [
-        buildHistoryMetaChip("history_label_size", Number(selected.size_bytes) > 0 ? `${formatMb(selected.size_bytes)}MB` : t("history_unknown")),
-        buildHistoryMetaChip("history_label_modified", formatLocalDateTime(selected.modified_at)),
-        buildHistoryMetaChip("history_label_duration", historyDurationText(selected.duration_s)),
+      chips.push(buildHistoryMetaChip("history_label_size", Number(selected.size_bytes) > 0 ? `${formatMb(selected.size_bytes)}MB` : t("history_unknown")));
+      chips.push(buildHistoryMetaChip("history_label_modified", formatLocalDateTime(selected.modified_at)));
+      chips.push(buildHistoryMetaChip("history_label_duration", historyDurationText(selected.duration_s)));
+      chips.push(
         buildHistoryMetaChip(
           "history_label_change_at",
           Boolean(selected.change_preview_available) && Number.isFinite(Number(selected.change_preview_time_s))
             ? formatDurationClock(Number(selected.change_preview_time_s))
             : t("history_unknown")
-        ),
-        buildHistoryMetaChip("history_label_fps", Number(selected.record_fps) > 0 ? String(selected.record_fps) : t("history_unknown")),
-        buildHistoryMetaChip("history_label_frames", Number(selected.written_frames) > 0 ? String(selected.written_frames) : t("history_unknown")),
-      ].join("");
-    } else {
-      metaNode.innerHTML = "";
+        )
+      );
+      chips.push(buildHistoryMetaChip("history_label_fps", Number(selected.record_fps) > 0 ? String(selected.record_fps) : t("history_unknown")));
+      chips.push(buildHistoryMetaChip("history_label_frames", Number(selected.written_frames) > 0 ? String(selected.written_frames) : t("history_unknown")));
     }
+    metaNode.innerHTML = chips.join("");
+  } else {
+    metaNode.innerHTML = "";
   }
 
   syncHistoryTimelineControls();
@@ -2301,10 +2840,19 @@ function renderHistoryRecordingsPanel() {
     return;
   }
 
-  const selected = historySelectedItem();
+  const activeHourBucket = historySelectedHourBucket();
+  if (!activeHourBucket) {
+    statusNode.textContent = t("history_status_select");
+    return;
+  }
+  if (activeHourBucket.segments.length === 0) {
+    statusNode.textContent = t("history_status_hour_empty");
+    return;
+  }
+
   const selectedName = historyDisplayName(selected);
   if (!selected || !historySelectedKey) {
-    statusNode.textContent = t("history_status_select");
+    statusNode.textContent = t("history_status_loading");
     return;
   }
   if (video?.error) {
@@ -2323,35 +2871,7 @@ function renderHistoryRecordingsPanel() {
     statusNode.textContent = t("history_status_loading");
     return;
   }
-  statusNode.textContent = t("history_status_select");
-}
-
-function selectHistoryRecording(videoKey, seekSeconds = null) {
-  const nextKey = String(videoKey || "");
-  if (!nextKey) {
-    return;
-  }
-  const seek = Number(seekSeconds);
-  const hasSeek = Number.isFinite(seek) && seek >= 0;
-  historyPendingSeekSeconds = hasSeek ? seek : null;
-  if (historyLoadedKey === nextKey && hasSeek) {
-    const video = document.getElementById("history-recording-video");
-    if (video) {
-      const duration = Number(video.duration || 0);
-      if (Number.isFinite(duration) && duration > 0) {
-        const target = Math.max(0, Math.min(seek, Math.max(0, duration - 0.05)));
-        try {
-          video.currentTime = target;
-          historyPendingSeekSeconds = null;
-        } catch (_err) {
-          // ignore invalid seek
-        }
-      }
-    }
-  }
-  historySelectedKey = nextKey;
-  loadHistoryRecordingVideo(nextKey);
-  renderHistoryRecordingsPanel();
+  statusNode.textContent = t("history_status_loading");
 }
 
 async function loadHistoryRecordings(force = false) {
@@ -2366,7 +2886,7 @@ async function loadHistoryRecordings(force = false) {
   renderHistoryRecordingsPanel();
 
   try {
-    const response = await fetch("/api/real/recordings?limit=80", { cache: "no-store" });
+    const response = await fetch("/api/real/recordings?limit=1000", { cache: "no-store" });
     if (!response.ok) {
       throw new Error(await responseDetailText(response));
     }
@@ -2377,22 +2897,47 @@ async function loadHistoryRecordings(force = false) {
 
     historySummary = payload;
     historyRecordings = Array.isArray(payload.items) ? payload.items : [];
+    historyDateBuckets = buildHistoryDateBuckets(historyRecordings);
 
-    if (!historySelectedKey || !historyRecordings.some((item) => String(item?.video_key || "") === historySelectedKey)) {
-      historySelectedKey = String(historyRecordings[0]?.video_key || "");
+    if (historyDateBuckets.length === 0) {
+      historySelectedDateKey = "";
+      historySelectedHour = -1;
+      historySelectedKey = "";
+      historyHourSeekSeconds = 0;
       historyLoadedKey = "";
       historyPendingSeekSeconds = null;
-    }
-
-    if (historySelectedKey) {
-      loadHistoryRecordingVideo(historySelectedKey);
-    } else {
+      historyTimelineAutoPlayPending = false;
       const video = document.getElementById("history-recording-video");
-      if (video && historyLoadedKey) {
+      if (video) {
         clearHistoryRecordingVideo(video);
       }
+      return;
+    }
+
+    const currentDate = historySelectedDateBucket();
+    if (!currentDate) {
+      const fallbackSelection = historyPickDefaultSelection();
+      historySelectedDateKey = String(fallbackSelection?.date_key || historyDateBuckets[0].date_key || "");
+      historySelectedHour = Number.isInteger(fallbackSelection?.hour) ? fallbackSelection.hour : 0;
+      historyHourSeekSeconds = 0;
+    } else if (!Number.isInteger(historySelectedHour) || historySelectedHour < 0 || historySelectedHour > 23) {
+      const fallbackSelection = historyPickDefaultSelection();
+      historySelectedHour = Number.isInteger(fallbackSelection?.hour) ? fallbackSelection.hour : 0;
+      historyHourSeekSeconds = 0;
+    }
+
+    const selectedHourBucket = historySelectedHourBucket();
+    if (!selectedHourBucket || selectedHourBucket.segments.length === 0) {
+      historySelectedKey = "";
       historyLoadedKey = "";
       historyPendingSeekSeconds = null;
+      historyTimelineAutoPlayPending = false;
+      const video = document.getElementById("history-recording-video");
+      if (video) {
+        clearHistoryRecordingVideo(video);
+      }
+    } else {
+      historySeekToHourOffset(historyHourSeekSeconds, { autoplay: false });
     }
   } catch (err) {
     if (requestSeq !== historyRequestSeq) {
@@ -2401,9 +2946,14 @@ async function loadHistoryRecordings(force = false) {
     historyLoadError = String(err);
     if (historyRecordings.length === 0) {
       historySummary = null;
+      historyDateBuckets = [];
       historyLoadedKey = "";
       historySelectedKey = "";
+      historySelectedDateKey = "";
+      historySelectedHour = -1;
+      historyHourSeekSeconds = 0;
       historyPendingSeekSeconds = null;
+      historyTimelineAutoPlayPending = false;
       const video = document.getElementById("history-recording-video");
       if (video) {
         clearHistoryRecordingVideo(video);
@@ -4167,6 +4717,10 @@ function renderInitSteps() {
 
 function openModal(id) {
   document.getElementById(id).classList.remove("hidden");
+  if (id === "settings-modal") {
+    settingsMobileLayer = "sections";
+    applySettingsMobileLayer("sections");
+  }
 }
 
 function closeModal(id) {
@@ -4175,6 +4729,10 @@ function closeModal(id) {
     clearInitMappingPreviewTimer();
     initState.mapRequestSeq += 1;
     initState.mapAfterImage = null;
+  }
+  if (id === "settings-modal") {
+    settingsMobileLayer = "sections";
+    applySettingsMobileLayer("sections");
   }
 }
 
@@ -5264,6 +5822,11 @@ async function analyzeUploadedVideoWithStatus(statusNode, openInitOnZoneRequired
 async function loadSettingsConfig() {
   const status = document.getElementById("settings-status");
   status.textContent = t("settings_status_loading");
+  if (settingsAutoSaveTimer) {
+    window.clearTimeout(settingsAutoSaveTimer);
+    settingsAutoSaveTimer = 0;
+  }
+  settingsSavePending = false;
   try {
     const response = await fetch("/api/config/raw", { cache: "no-store" });
     if (!response.ok) {
@@ -5276,6 +5839,7 @@ async function loadSettingsConfig() {
 
     settingsRawConfig = deepClone(raw);
     settingsWorkingConfig = deepClone(raw);
+    settingsLastSavedSnapshot = JSON.stringify(raw);
 
     const langs = settingsWorkingConfig?.frontend?.available_languages;
     if (Array.isArray(langs) && langs.length > 0) {
@@ -5289,6 +5853,7 @@ async function loadSettingsConfig() {
     }
     renderSettingsSectionList();
     renderSettingsSectionContent();
+    applySettingsMobileLayer(settingsMobileLayer);
     status.textContent = t("settings_status_loaded");
     await loadDemoStatus();
   } catch (err) {
@@ -5296,44 +5861,69 @@ async function loadSettingsConfig() {
   }
 }
 
-async function saveSettingsConfig() {
+async function saveSettingsConfig({ auto = false, skipCommit = false } = {}) {
   const status = document.getElementById("settings-status");
-  status.textContent = t("settings_status_saving");
   if (!settingsWorkingConfig) {
     status.textContent = formatText("settings_status_save_fail", { error: "settings not loaded" });
-    return;
+    return false;
   }
-  if (!commitCurrentSectionEdits()) {
-    return;
+  if (!skipCommit && !commitCurrentSectionEdits()) {
+    return false;
   }
 
   const raw = deepClone(settingsWorkingConfig);
   ensureHamsterProfileDefaults(raw);
   removeDeprecatedVideoSettings(raw);
-
-  const response = await fetch("/api/config/raw", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ config: raw }),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    status.textContent = formatText("settings_status_save_fail", { error: text });
-    return;
+  const nextSnapshot = JSON.stringify(raw);
+  if (nextSnapshot === settingsLastSavedSnapshot) {
+    if (auto) {
+      status.textContent = t("settings_status_saved");
+    }
+    return true;
+  }
+  if (settingsSaveInFlight) {
+    settingsSavePending = true;
+    return true;
   }
 
-  const payload = await response.json();
-  const cfg = payload.config || {};
-  currentRunMode = cfg.app?.run_mode || currentRunMode;
-  currentDemoSource = cfg.app?.demo_source || currentDemoSource;
-  availableLanguages = cfg.frontend?.available_languages || availableLanguages;
-  setLanguage(cfg.frontend?.default_language || currentLanguage);
-  updateModeSelectorsLabel();
-  updateUploadBlockVisibility();
-  status.textContent = t("settings_status_saved");
-  await loadSettingsConfig();
-  await loadDashboard(shouldForceDashboardRefresh());
+  settingsSaveInFlight = true;
+  status.textContent = t("settings_status_saving");
+  try {
+    const response = await fetch("/api/config/raw", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ config: raw }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      status.textContent = formatText("settings_status_save_fail", { error: text });
+      return false;
+    }
+
+    const payload = await response.json();
+    const cfg = payload.config || raw;
+    settingsLastSavedSnapshot = JSON.stringify(cfg);
+    settingsRawConfig = deepClone(cfg);
+    settingsWorkingConfig = deepClone(cfg);
+    currentRunMode = cfg.app?.run_mode || currentRunMode;
+    currentDemoSource = cfg.app?.demo_source || currentDemoSource;
+    availableLanguages = cfg.frontend?.available_languages || availableLanguages;
+    setLanguage(cfg.frontend?.default_language || currentLanguage);
+    updateModeSelectorsLabel();
+    updateUploadBlockVisibility();
+    status.textContent = t("settings_status_saved");
+    return true;
+  } catch (err) {
+    status.textContent = formatText("settings_status_save_fail", { error: String(err.message || err) });
+    return false;
+  } finally {
+    settingsSaveInFlight = false;
+    if (settingsSavePending) {
+      settingsSavePending = false;
+      scheduleSettingsAutoSave(0);
+    }
+  }
 }
 
 function bindEvents() {
@@ -5404,14 +5994,20 @@ function bindEvents() {
       if (!(origin instanceof Element)) {
         return;
       }
-      const button = origin.closest("[data-history-key]");
-      if (!button) {
+      const dateButton = origin.closest("[data-history-date-switch]");
+      if (dateButton) {
+        selectHistoryDate(dateButton.getAttribute("data-history-date-key"));
         return;
       }
-      const jumpNode = origin.closest("[data-history-jump-seconds]");
-      const jumpRaw = jumpNode ? Number(jumpNode.getAttribute("data-history-jump-seconds")) : Number.NaN;
-      const jumpSeconds = Number.isFinite(jumpRaw) && jumpRaw >= 0 ? jumpRaw : null;
-      selectHistoryRecording(button.getAttribute("data-history-key"), jumpSeconds);
+      const hourButton = origin.closest("[data-history-hour]");
+      if (!hourButton) {
+        return;
+      }
+      const dateKey = String(hourButton.getAttribute("data-history-date-key") || historySelectedDateKey || "");
+      const hour = Number(hourButton.getAttribute("data-history-hour"));
+      const seekRaw = Number(hourButton.getAttribute("data-history-seek-seconds"));
+      const seekSeconds = Number.isFinite(seekRaw) && seekRaw >= 0 ? seekRaw : 0;
+      selectHistoryHour(dateKey, hour, seekSeconds, false);
     });
   }
 
@@ -5428,6 +6024,7 @@ function bindEvents() {
       renderHistoryRecordingsPanel();
     });
     historyVideo.addEventListener("timeupdate", () => {
+      historyClampPlaybackToSelectedHour(historyVideo);
       syncHistoryTimelineControls();
     });
     historyVideo.addEventListener("seeking", () => {
@@ -5446,6 +6043,15 @@ function bindEvents() {
       renderHistoryRecordingsPanel();
     });
     historyVideo.addEventListener("ended", () => {
+      const hourBucket = historySelectedHourBucket();
+      if (hourBucket && hourBucket.segments.length > 0 && historyLoadedKey) {
+        const idx = hourBucket.segments.findIndex((segment) => String(segment.video_key || "") === historyLoadedKey);
+        if (idx >= 0 && idx + 1 < hourBucket.segments.length) {
+          const nextSegment = hourBucket.segments[idx + 1];
+          const nextOffset = clampHistoryHourSeconds((Number(nextSegment.start_ms) - Number(hourBucket.start_ms)) / 1000);
+          historySeekToHourOffset(nextOffset, { autoplay: true });
+        }
+      }
       syncHistoryTimelineControls();
       renderHistoryRecordingsPanel();
     });
@@ -5468,17 +6074,18 @@ function bindEvents() {
       historyTimelineDragging = true;
       const target = Number(historyTimelineSlider.value);
       if (Number.isFinite(target) && target >= 0) {
-        try {
-          historyVideo.currentTime = target;
-        } catch (_err) {
-          // ignore invalid seek
-        }
+        historySeekToHourOffset(target, { autoplay: false });
       }
       syncHistoryTimelineControls();
     });
     historyTimelineSlider.addEventListener("change", () => {
       historyTimelineDragging = false;
+      const target = Number(historyTimelineSlider.value);
+      if (Number.isFinite(target) && target >= 0) {
+        historySeekToHourOffset(target, { autoplay: false });
+      }
       syncHistoryTimelineControls();
+      renderHistoryRecordingsPanel();
     });
   }
 
@@ -5531,9 +6138,23 @@ function bindEvents() {
     }
   });
 
-  document.getElementById("settings-close").addEventListener("click", () => closeModal("settings-modal"));
-  document.getElementById("settings-reload").addEventListener("click", loadSettingsConfig);
-  document.getElementById("settings-save").addEventListener("click", saveSettingsConfig);
+  document.getElementById("settings-close").addEventListener("click", () => {
+    if (!commitCurrentSectionEdits()) {
+      return;
+    }
+    scheduleSettingsAutoSave(0);
+    closeModal("settings-modal");
+  });
+  const settingsMobileBack = document.getElementById("settings-mobile-back");
+  if (settingsMobileBack) {
+    settingsMobileBack.addEventListener("click", () => {
+      if (!commitCurrentSectionEdits()) {
+        return;
+      }
+      scheduleSettingsAutoSave();
+      applySettingsMobileLayer("sections");
+    });
+  }
   document.getElementById("settings-upload").addEventListener("click", uploadDemoVideo);
   document.getElementById("settings-use-uploaded").addEventListener("click", selectUploadedVideo);
   document.getElementById("settings-uploaded-select").addEventListener("change", () => {
@@ -5587,13 +6208,16 @@ function bindEvents() {
     settingsForm.addEventListener("change", (event) => {
       const target = event.target.closest("[data-setting-path]");
       const path = target?.getAttribute("data-setting-path");
-      if (!path || !["app.run_mode", "alerts.notifier_provider"].includes(path)) {
+      if (!path) {
         return;
       }
       if (!commitCurrentSectionEdits()) {
         return;
       }
-      renderSettingsSectionContent();
+      if (["app.run_mode", "alerts.notifier_provider"].includes(path)) {
+        renderSettingsSectionContent();
+      }
+      scheduleSettingsAutoSave();
     });
   }
 
@@ -5611,6 +6235,7 @@ function bindEvents() {
   window.addEventListener("resize", () => {
     resizeCharts();
     layoutInitCanvasDisplay();
+    applySettingsMobileLayer();
   });
 }
 

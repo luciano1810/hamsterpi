@@ -138,7 +138,7 @@
             </article>
           </div>
 
-          <article class="panel">
+          <article class="panel panel-overview-alerts">
             <div class="panel-head">
               <h2 data-i18n="alerts_title">告警流</h2>
               <p data-i18n="alerts_desc">来自越界、健康、补给与环境规则的实时告警</p>
@@ -324,14 +324,23 @@
         <article class="panel panel-live">
           <div class="panel-head">
             <h2 data-i18n="history_title">历史录像</h2>
-            <p data-i18n="history_desc">查看真实模式循环录制生成的历史片段，点击列表即可回放。</p>
+            <p data-i18n="history_desc">按日期和24小时选择历史录像，拖动时间轴查看该小时画面。</p>
           </div>
           <div class="history-toolbar">
             <p id="history-recordings-summary" class="live-status"></p>
             <button id="history-refresh-btn" class="btn btn-ghost btn-xs" data-i18n="history_btn_refresh">刷新录像列表</button>
           </div>
           <div class="history-layout">
-            <div id="history-recordings-list" class="history-recordings-list"></div>
+            <div id="history-recordings-list" class="history-recordings-list">
+              <div class="history-selector-block">
+                <p class="history-selector-label" data-i18n="history_filter_date">日期</p>
+                <div class="history-date-list"></div>
+              </div>
+              <div class="history-selector-block">
+                <p class="history-selector-label" data-i18n="history_filter_hours">24小时</p>
+                <div class="history-hour-grid"></div>
+              </div>
+            </div>
             <div class="history-player-wrap">
               <video id="history-recording-video" class="live-player history-player" controls playsinline preload="metadata"></video>
               <div class="history-timeline">
@@ -340,6 +349,7 @@
                   <span id="history-current-time">00:00</span>
                   <span id="history-total-time">00:00</span>
                 </p>
+                <p id="history-hour-range" class="history-hour-range"></p>
               </div>
               <div id="history-recording-meta" class="history-recording-meta"></div>
             </div>
@@ -422,15 +432,15 @@
             <p class="settings-label" data-i18n="settings_section_title">配置分组</p>
             <div id="settings-section-list" class="settings-section-list"></div>
 
-            <div class="settings-btns">
-              <button id="settings-reload" class="btn btn-ghost btn-xs" data-i18n="btn_reload_config">重载配置</button>
-              <button id="settings-save" class="btn btn-solid btn-xs" data-i18n="btn_save_config">保存配置</button>
-            </div>
-
             <p id="settings-status" class="modal-sub"></p>
           </aside>
 
           <section class="settings-editor-wrap">
+            <div class="settings-mobile-nav">
+              <button id="settings-mobile-back" type="button" class="btn btn-ghost btn-xs hidden" data-i18n="settings_mobile_back">
+                返回分组
+              </button>
+            </div>
             <p id="settings-section-title" class="settings-label">-</p>
             <p id="settings-section-desc" class="modal-sub"></p>
 

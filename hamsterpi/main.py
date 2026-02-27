@@ -2297,7 +2297,7 @@ def real_recordings(limit: int = Query(default=240, ge=1, le=1000)) -> Dict[str,
         limit=limit,
     )
 
-    preview_budget = min(80, len(items))
+    preview_budget = min(len(items), max(240, int(limit)))
     for idx, item in enumerate(items):
         item["change_preview_available"] = False
         item["change_preview_time_s"] = 0.0
