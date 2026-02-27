@@ -1788,6 +1788,12 @@ function applyStaticI18n() {
       node.textContent = t(key);
     }
   });
+  document.querySelectorAll("[data-i18n-aria-label]").forEach((node) => {
+    const key = node.getAttribute("data-i18n-aria-label");
+    if (key) {
+      node.setAttribute("aria-label", t(key));
+    }
+  });
 
   const autoBtn = document.getElementById("toggle-auto-btn");
   autoBtn.textContent = autoRefresh ? t("btn_auto_on") : t("btn_auto_off");
